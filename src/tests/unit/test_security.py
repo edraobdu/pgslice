@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch, MagicMock
 
 from snippy.utils.security import SQLSanitizer, SecureCredentials
-from snippy.utils.exceptions import InvalidIdentifierError
+from snippy.utils.exceptions import SecurityError
 
 
 class TestSQLSanitizer:
@@ -38,23 +38,23 @@ class TestSQLSanitizer:
         "table%name",  # Percent
     ])
     def test_invalid_identifiers(self, identifier):
-        """Test invalid SQL identifiers raise InvalidIdentifierError."""
-        with pytest.raises(InvalidIdentifierError):
+        """Test invalid SQL identifiers raise SecurityError."""
+        with pytest.raises(SecurityError):
             SQLSanitizer.validate_identifier(identifier)
 
     def test_none_identifier(self):
-        """Test None identifier raises InvalidIdentifierError."""
-        with pytest.raises(InvalidIdentifierError):
+        """Test None identifier raises SecurityError."""
+        with pytest.raises(SecurityError):
             SQLSanitizer.validate_identifier(None)
 
     def test_numeric_identifier(self):
-        """Test numeric identifier raises InvalidIdentifierError."""
-        with pytest.raises(InvalidIdentifierError):
+        """Test numeric identifier raises SecurityError."""
+        with pytest.raises(SecurityError):
             SQLSanitizer.validate_identifier(123)
 
     def test_error_message_contains_identifier(self):
         """Test error message contains the invalid identifier."""
-        with pytest.raises(InvalidIdentifierError) as exc_info:
+        with pytest.raises(SecurityError) as exc_info:
             SQLSanitizer.validate_identifier("bad-table")
 
         assert "bad-table" in str(exc_info.value)
@@ -70,7 +70,7 @@ class TestSQLSanitizer:
         ]
 
         for attempt in injection_attempts:
-            with pytest.raises(InvalidIdentifierError):
+            with pytest.raises(SecurityError):
                 SQLSanitizer.validate_identifier(attempt)
 
     def test_case_sensitivity(self):

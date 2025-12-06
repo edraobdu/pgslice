@@ -7,7 +7,7 @@ from freezegun import freeze_time
 
 from snippy.db.connection import ConnectionManager
 from snippy.config import DatabaseConfig
-from snippy.utils.exceptions import ConnectionError, ReadOnlyViolationError
+from snippy.utils.exceptions import ConnectionError
 
 
 class TestConnectionManagerCreation:
@@ -196,7 +196,7 @@ class TestConnectionManagerRequireReadOnly:
 
         manager = ConnectionManager(test_db_config, ttl_minutes=30, require_read_only=True)
 
-        with pytest.raises(ReadOnlyViolationError):
+        with pytest.raises(ConnectionError):
             manager.get_connection()
 
     @patch('psycopg.connect')

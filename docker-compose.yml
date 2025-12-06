@@ -9,10 +9,8 @@ services:
       POSTGRES_USER: test_user
       POSTGRES_PASSWORD: test_pass
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
-      - ./tests/test_data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-      - ./tests/test_data/large_sample_data.sql:/docker-entrypoint-initdb.d/02-data.sql
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
@@ -38,7 +36,9 @@ services:
       # Set password as environment variable to avoid prompt in container
       PGPASSWORD: test_pass
     volumes:
-      - ./output:/app/output  # For saving SQL dumps
+      - ./src:/app/src              # Mount source code for hot-reloading
+      - ./pyproject.toml:/app/pyproject.toml  # Mount project config
+      - ./output:/app/output        # For saving SQL dumps
     stdin_open: true  # Keep stdin open for interactive REPL
     tty: true         # Allocate pseudo-TTY for interactive terminal
     command: tail -f /dev/null  # Keep container running

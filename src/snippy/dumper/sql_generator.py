@@ -6,7 +6,7 @@ from typing import Any
 from uuid import UUID
 
 from ..db.schema import SchemaIntrospector
-from ..graph.models import RecordData
+from ..graph.models import RecordData, RecordIdentifier
 from ..utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -85,10 +85,33 @@ class SQLGenerator:
         return sql
 
     def generate_batch(
-        self, records: list[RecordData], include_transaction: bool = True
+        self,
+        records: list[RecordData],
+        include_transaction: bool = True,
+        keep_pks: bool = False,
     ) -> str:
         """
         Generate SQL for multiple records with proper ordering and bulk INSERTs.
+
+        Args:
+            records: List of RecordData in dependency order
+            include_transaction: Whether to wrap in BEGIN/COMMIT
+            keep_pks: If True, keep original PK values (current behavior).
+                     If False, exclude auto-generated PKs and use PL/pgSQL remapping.
+
+        Returns:
+            Complete SQL script
+        """
+        if keep_pks:
+            return self._generate_batch_with_pks(records, include_transaction)
+        else:
+            return self._generate_batch_with_plpgsql_remapping(records, include_transaction)
+
+    def _generate_batch_with_pks(
+        self, records: list[RecordData], include_transaction: bool
+    ) -> str:
+        """
+        Generate SQL with original PK values (current behavior).
 
         Args:
             records: List of RecordData in dependency order
@@ -119,9 +142,19 @@ class SQLGenerator:
             sql_statements.append("BEGIN;")
             sql_statements.append("")
 
-        # Group records by table (preserving dependency order within each table)
-        records_by_table: dict[tuple[str, str], list[RecordData]] = defaultdict(list)
+        # BEFORE grouping by table, deduplicate based on RecordIdentifier
+        seen_identifiers: set[RecordIdentifier] = set()
+        unique_records: list[RecordData] = []
         for record in records:
+            if record.identifier not in seen_identifiers:
+                seen_identifiers.add(record.identifier)
+                unique_records.append(record)
+            else:
+                logger.warning(f"Duplicate record detected and skipped: {record.identifier}")
+
+        # Group unique records by table (preserving dependency order within each table)
+        records_by_table: dict[tuple[str, str], list[RecordData]] = defaultdict(list)
+        for record in unique_records:
             key = (record.identifier.schema_name, record.identifier.table_name)
             records_by_table[key].append(record)
 
@@ -221,3 +254,364 @@ class SQLGenerator:
             # Fallback: convert to string and escape
             logger.warning(f"Unknown type {type(value)} for value {value}, converting to string")
             return self._format_value(str(value))
+
+    # ============================================================================
+    # PL/pgSQL Generation with ID Remapping
+    # ============================================================================
+
+    def _generate_batch_with_plpgsql_remapping(
+        self, records: list[RecordData], include_transaction: bool
+    ) -> str:
+        """
+        Generate PL/pgSQL script with ID remapping for auto-generated PKs.
+
+        Algorithm:
+        1. Deduplicate records
+        2. Group by table
+        3. Identify tables with auto-generated PKs
+        4. Build temp table for ID mappings
+        5. Generate PL/pgSQL DO block with:
+           - INSERT ... RETURNING for tables with auto-gen PKs
+           - Store old_id -> new_id in temp table
+           - Replace FK values with subqueries to lookup mapped IDs
+        6. Drop temp table
+
+        Returns:
+            PL/pgSQL script as string
+        """
+        from collections import defaultdict
+
+        logger.info(f"Generating PL/pgSQL with ID remapping for {len(records)} records")
+
+        # 1. Deduplicate records (same as duplicate bug fix)
+        seen_identifiers: set[RecordIdentifier] = set()
+        unique_records: list[RecordData] = []
+        for record in records:
+            if record.identifier not in seen_identifiers:
+                seen_identifiers.add(record.identifier)
+                unique_records.append(record)
+            else:
+                logger.warning(f"Duplicate record detected and skipped: {record.identifier}")
+
+        # 2. Group by table (preserving dependency order)
+        records_by_table: dict[tuple[str, str], list[RecordData]] = defaultdict(list)
+        for record in unique_records:
+            key = (record.identifier.schema_name, record.identifier.table_name)
+            records_by_table[key].append(record)
+
+        # 3. Identify tables with auto-generated PKs
+        tables_with_remapped_ids: set[tuple[str, str]] = set()
+        for (schema, table) in records_by_table.keys():
+            if self._has_auto_generated_pks(schema, table):
+                tables_with_remapped_ids.add((schema, table))
+
+        # 4. Build SQL script
+        sql_parts = []
+
+        # Header
+        sql_parts.extend([
+            "-- Generated by snippy",
+            f"-- Date: {datetime.now().isoformat()}",
+            f"-- Records: {len(unique_records)}",
+            f"-- Mode: PL/pgSQL with ID remapping",
+            "",
+        ])
+
+        # Create temp table for ID mappings
+        sql_parts.extend([
+            "-- Create temporary table for ID mapping",
+            "CREATE TEMP TABLE IF NOT EXISTS _snippy_id_map (",
+            "    table_name TEXT NOT NULL,",
+            "    old_id TEXT NOT NULL,",
+            "    new_id TEXT NOT NULL,",
+            "    PRIMARY KEY (table_name, old_id)",
+            ");",
+            "",
+        ])
+
+        # Start PL/pgSQL block
+        sql_parts.extend([
+            "-- Main PL/pgSQL block with ID remapping",
+            "DO $$",
+            "DECLARE",
+        ])
+
+        # Declare variables for each table with remapping
+        for (schema, table) in tables_with_remapped_ids:
+            auto_gen_pks = self._get_auto_generated_pk_columns(schema, table)
+            if auto_gen_pks:
+                # Get the data type of the first PK column for variable declaration
+                table_meta = self.introspector.get_table_metadata(schema, table)
+                pk_col = auto_gen_pks[0]
+                col_info = next((c for c in table_meta.columns if c.name == pk_col), None)
+                if col_info:
+                    pg_type = col_info.data_type
+                    sql_parts.append(f"    v_new_id_{table} {pg_type};")
+                    sql_parts.append(f"    v_new_ids_{table} {pg_type}[];")
+                    sql_parts.append(f"    v_old_ids_{table} TEXT[];")
+
+        sql_parts.extend([
+            "    i INTEGER;",
+            "BEGIN",
+            "",
+        ])
+
+        # 5. Generate INSERT statements for each table
+        for (schema, table), table_records in records_by_table.items():
+            full_table_name = f'"{schema}"."{table}"'
+            has_remapped_ids = (schema, table) in tables_with_remapped_ids
+
+            # Add comment
+            sql_parts.append(f"    -- Table: {full_table_name} ({len(table_records)} records)")
+
+            # Split into batches
+            for i in range(0, len(table_records), self.batch_size):
+                batch = table_records[i : i + self.batch_size]
+
+                if has_remapped_ids:
+                    # Generate INSERT with RETURNING and ID mapping
+                    insert_sql = self._generate_insert_with_remapping(
+                        schema, table, batch
+                    )
+                else:
+                    # Generate regular INSERT (may have FK remapping)
+                    insert_sql = self._generate_insert_with_fk_remapping(
+                        schema, table, batch, tables_with_remapped_ids
+                    )
+
+                sql_parts.append(insert_sql)
+                sql_parts.append("")
+
+        # End PL/pgSQL block
+        sql_parts.extend([
+            "END $$;",
+            "",
+        ])
+
+        # Drop temp table
+        sql_parts.extend([
+            "-- Cleanup",
+            "DROP TABLE IF EXISTS _snippy_id_map;",
+            "",
+        ])
+
+        result = "\n".join(sql_parts)
+        logger.info(f"Generated PL/pgSQL script ({len(result)} bytes)")
+        return result
+
+    def _get_auto_generated_pk_columns(self, schema: str, table: str) -> list[str]:
+        """
+        Get list of auto-generated PK columns for a table.
+
+        Returns:
+            List of column names that are both PK and auto-generated
+        """
+        table_meta = self.introspector.get_table_metadata(schema, table)
+        auto_gen_pks = []
+        for col in table_meta.columns:
+            if col.is_primary_key and col.is_auto_generated:
+                auto_gen_pks.append(col.name)
+        return auto_gen_pks
+
+    def _has_auto_generated_pks(self, schema: str, table: str) -> bool:
+        """Check if table has any auto-generated PK columns."""
+        return len(self._get_auto_generated_pk_columns(schema, table)) > 0
+
+    def _get_fk_columns_to_remap(
+        self, schema: str, table: str, tables_with_remapped_ids: set[tuple[str, str]]
+    ) -> dict[str, tuple[str, str]]:
+        """
+        Get FK columns that reference tables with remapped IDs.
+
+        Args:
+            schema: Current table schema
+            table: Current table name
+            tables_with_remapped_ids: Set of (schema, table) tuples that have ID remapping
+
+        Returns:
+            Dict mapping FK column name -> (target_schema, target_table)
+        """
+        table_meta = self.introspector.get_table_metadata(schema, table)
+        fk_to_remap = {}
+
+        for fk in table_meta.foreign_keys_outgoing:
+            # Parse target schema and table from FK
+            # ForeignKey has: source_table, source_column, target_table, target_column
+            # We need to determine the target schema
+            # For simplicity, assume same schema unless specified
+            target_schema = schema  # Default to same schema
+            target_table = fk.target_table
+
+            target_key = (target_schema, target_table)
+            if target_key in tables_with_remapped_ids:
+                fk_to_remap[fk.source_column] = target_key
+
+        return fk_to_remap
+
+    def _serialize_pk_value(self, pk_values: tuple[Any, ...]) -> str:
+        """
+        Serialize PK value(s) to string for storage in temp table.
+
+        Handles:
+        - Single values: convert to string
+        - Composite PKs: JSON array
+        - UUIDs: string representation
+
+        Examples:
+            (123,) -> "123"
+            (1, 2) -> "[1, 2]"
+            (UUID("..."),) -> "uuid-string"
+        """
+        if len(pk_values) == 1:
+            val = pk_values[0]
+            if isinstance(val, UUID):
+                return str(val)
+            return str(val)
+        else:
+            # Composite PK: use JSON array
+            return json.dumps([str(v) for v in pk_values])
+
+    def _build_fk_remapping_value(
+        self,
+        old_fk_value: Any,
+        target_table_full: str,
+        fk_data_type: str,
+    ) -> str:
+        """
+        Build SQL expression to lookup remapped FK value.
+
+        Args:
+            old_fk_value: Original FK value from source DB
+            target_table_full: Fully qualified target table name (schema.table)
+            fk_data_type: PostgreSQL data type for casting
+
+        Returns:
+            SQL expression - either subquery for lookup or NULL
+
+        Examples:
+            NULL -> NULL
+            3 -> (SELECT new_id::INTEGER FROM _snippy_id_map WHERE table_name='users' AND old_id='3')
+        """
+        if old_fk_value is None:
+            return "NULL"
+
+        old_id_str = str(old_fk_value)
+
+        return (
+            f"(SELECT new_id::{fk_data_type} FROM _snippy_id_map "
+            f"WHERE table_name='{target_table_full}' AND old_id='{old_id_str}')"
+        )
+
+    def _generate_insert_with_remapping(
+        self, schema: str, table: str, records: list[RecordData]
+    ) -> str:
+        """Generate INSERT with RETURNING and store ID mappings."""
+        # Get auto-generated PK columns
+        auto_gen_pks = self._get_auto_generated_pk_columns(schema, table)
+
+        # Get all columns EXCEPT auto-generated PKs
+        first_record = records[0]
+        all_columns = sorted(first_record.data.keys())
+        insert_columns = [col for col in all_columns if col not in auto_gen_pks]
+
+        # Build column list
+        columns_sql = ", ".join(f'"{col}"' for col in insert_columns)
+
+        # Build VALUES rows
+        values_rows = []
+        old_pk_values = []
+        for record in records:
+            values = [self._format_value(record.data.get(col)) for col in insert_columns]
+            values_sql = ", ".join(values)
+            values_rows.append(f"        ({values_sql})")
+
+            # Store old PK value for mapping
+            # Get the PK values from the record identifier
+            old_pks = record.identifier.pk_values
+            old_pk_values.append(self._serialize_pk_value(old_pks))
+
+        values_clause = ",\n".join(values_rows)
+        full_table_name = f'"{schema}"."{table}"'
+
+        if len(records) == 1:
+            # Single insert: use RETURNING INTO scalar variable
+            sql_lines = [
+                f"    INSERT INTO {full_table_name} ({columns_sql})",
+                f"    VALUES",
+                f"{values_clause}",
+                f"    RETURNING {auto_gen_pks[0]} INTO v_new_id_{table};",
+                f"    INSERT INTO _snippy_id_map VALUES ('{full_table_name}', '{old_pk_values[0]}', v_new_id_{table}::TEXT);",
+            ]
+        else:
+            # Bulk insert: use WITH + array aggregation + loop
+            old_ids_array = ", ".join(f"'{val}'" for val in old_pk_values)
+            sql_lines = [
+                f"    v_old_ids_{table} := ARRAY[{old_ids_array}];",
+                f"    WITH inserted AS (",
+                f"        INSERT INTO {full_table_name} ({columns_sql})",
+                f"        VALUES",
+                f"{values_clause}",
+                f"        RETURNING {auto_gen_pks[0]}",
+                f"    )",
+                f"    SELECT array_agg({auto_gen_pks[0]}) INTO v_new_ids_{table} FROM inserted;",
+                f"    ",
+                f"    FOR i IN 1..array_length(v_new_ids_{table}, 1) LOOP",
+                f"        INSERT INTO _snippy_id_map VALUES ('{full_table_name}', v_old_ids_{table}[i], v_new_ids_{table}[i]::TEXT);",
+                f"    END LOOP;",
+            ]
+
+        return "\n".join(sql_lines)
+
+    def _generate_insert_with_fk_remapping(
+        self,
+        schema: str,
+        table: str,
+        records: list[RecordData],
+        tables_with_remapped_ids: set[tuple[str, str]],
+    ) -> str:
+        """Generate INSERT with FK values replaced by subqueries."""
+        # Get FK columns that need remapping
+        fk_to_remap = self._get_fk_columns_to_remap(schema, table, tables_with_remapped_ids)
+
+        # Build column list (all columns, including PKs)
+        first_record = records[0]
+        columns = sorted(first_record.data.keys())
+        columns_sql = ", ".join(f'"{col}"' for col in columns)
+
+        # Build VALUES rows
+        values_rows = []
+        for record in records:
+            values = []
+            for col in columns:
+                if col in fk_to_remap:
+                    # Replace FK value with subquery
+                    old_value = record.data.get(col)
+                    target_schema, target_table = fk_to_remap[col]
+                    target_full = f'"{target_schema}"."{target_table}"'
+
+                    # Get FK column data type for casting
+                    table_meta = self.introspector.get_table_metadata(schema, table)
+                    col_meta = next((c for c in table_meta.columns if c.name == col), None)
+                    fk_data_type = col_meta.data_type if col_meta else "INTEGER"
+
+                    remapped_value = self._build_fk_remapping_value(
+                        old_value, target_full, fk_data_type
+                    )
+                    values.append(remapped_value)
+                else:
+                    # Regular value
+                    values.append(self._format_value(record.data.get(col)))
+
+            values_sql = ", ".join(values)
+            values_rows.append(f"        ({values_sql})")
+
+        values_clause = ",\n".join(values_rows)
+        full_table_name = f'"{schema}"."{table}"'
+
+        sql_lines = [
+            f"    INSERT INTO {full_table_name} ({columns_sql})",
+            f"    VALUES",
+            f"{values_clause};",
+        ]
+
+        return "\n".join(sql_lines)

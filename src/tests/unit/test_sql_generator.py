@@ -6,8 +6,7 @@ from uuid import UUID
 from unittest.mock import Mock
 
 from snippy.dumper.sql_generator import SQLGenerator
-from snippy.graph.models import RecordIdentifier, RecordData
-from snippy.db.schema import TableMetadata, ColumnMetadata
+from snippy.graph.models import RecordIdentifier, RecordData, Table, Column
 
 
 class TestSQLGeneratorValueFormatting:
@@ -142,7 +141,7 @@ class TestSQLGeneratorBulkInsert:
     @pytest.fixture
     def mock_table_metadata(self):
         """Create mock table metadata."""
-        return TableMetadata(
+        return Table(
             schema_name="public",
             table_name="users",
             columns=[],
@@ -215,7 +214,7 @@ class TestSQLGeneratorBulkInsert:
     def test_table_without_primary_key(self, generator, mock_introspector):
         """Test table without primary key has no ON CONFLICT clause."""
         # Create metadata with no primary keys
-        metadata = TableMetadata(
+        metadata = Table(
             schema_name="public",
             table_name="logs",
             columns=[],
@@ -257,7 +256,7 @@ class TestSQLGeneratorBatch:
     @pytest.fixture
     def mock_table_metadata(self):
         """Create mock table metadata."""
-        return TableMetadata(
+        return Table(
             schema_name="public",
             table_name="users",
             columns=[],
@@ -337,3 +336,55 @@ class TestSQLGeneratorBatch:
         assert "-- Date:" in result
         assert "-- Records: 1" in result
         assert "-- Batch size:" in result
+
+    def test_generate_batch_deduplicates_records(self, generator):
+        """Test SQL generator handles duplicate RecordData in input list."""
+        # Create duplicate RecordData (same identifier, same data)
+        record1 = RecordData(
+            identifier=RecordIdentifier("public", "users", {"id": 3}),
+            data={"id": 3, "username": "alice", "email": "alice@example.com"},
+            dependencies=[],
+        )
+        # Create another record with the same identifier (duplicate)
+        record2 = RecordData(
+            identifier=RecordIdentifier("public", "users", {"id": 3}),
+            data={"id": 3, "username": "alice", "email": "alice@example.com"},
+            dependencies=[],
+        )
+        # Create a different record
+        record3 = RecordData(
+            identifier=RecordIdentifier("public", "users", {"id": 5}),
+            data={"id": 5, "username": "bob", "email": "bob@example.com"},
+            dependencies=[],
+        )
+
+        # Pass list with duplicate record
+        records = [record1, record2, record3]
+        result = generator.generate_batch(records)
+
+        # Count occurrences of the duplicate record's data in the result
+        # Should appear only once, not twice
+        assert result.count("'alice@example.com'") == 1
+        assert result.count("'alice'") == 1
+
+        # The other record should still be there
+        assert result.count("'bob@example.com'") == 1
+        assert result.count("'bob'") == 1
+
+        # Should only have 2 value rows (one for alice, one for bob)
+        # Count the pattern of closing parenthesis followed by comma or ON CONFLICT
+        # This is a simple heuristic - the VALUES clause should have 2 rows
+        lines = result.split('\n')
+        values_section_started = False
+        value_row_count = 0
+
+        for line in lines:
+            if 'VALUES' in line:
+                values_section_started = True
+                continue
+            if values_section_started and line.strip().startswith('('):
+                value_row_count += 1
+            if 'ON CONFLICT' in line:
+                break
+
+        assert value_row_count == 2

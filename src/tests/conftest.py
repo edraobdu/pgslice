@@ -5,7 +5,8 @@ import psycopg
 from pathlib import Path
 from unittest.mock import Mock
 
-from snippy.db.schema import SchemaIntrospector, TableMetadata, ColumnMetadata, ForeignKeyMetadata
+from snippy.db.schema import SchemaIntrospector
+from snippy.graph.models import Table, Column, ForeignKey
 from snippy.config import DatabaseConfig, CacheConfig, AppConfig
 
 
@@ -44,32 +45,32 @@ def mock_introspector(mocker):
 @pytest.fixture
 def sample_table_metadata():
     """Sample table metadata for testing."""
-    return TableMetadata(
+    return Table(
         schema_name="public",
         table_name="users",
         columns=[
-            ColumnMetadata(
+            Column(
                 name="id",
                 data_type="integer",
                 nullable=False,
                 default="nextval('users_id_seq'::regclass)",
                 is_primary_key=True,
             ),
-            ColumnMetadata(
+            Column(
                 name="username",
                 data_type="character varying",
                 nullable=False,
                 default=None,
                 is_primary_key=False,
             ),
-            ColumnMetadata(
+            Column(
                 name="email",
                 data_type="character varying",
                 nullable=False,
                 default=None,
                 is_primary_key=False,
             ),
-            ColumnMetadata(
+            Column(
                 name="role_id",
                 data_type="integer",
                 nullable=True,
@@ -79,7 +80,8 @@ def sample_table_metadata():
         ],
         primary_keys=["id"],
         foreign_keys_outgoing=[
-            ForeignKeyMetadata(
+            ForeignKey(
+                constraint_name="users_role_id_fkey",
                 source_table="users",
                 source_column="role_id",
                 target_table="roles",

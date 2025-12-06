@@ -118,6 +118,7 @@ class REPL:
             self.console.print("  --schema SCHEMA       Schema name (default: public)")
             self.console.print("  --timeframe SPEC      Timeframe filter (table:column:start:end)")
             self.console.print("  --wide                Wide mode: follow all relationships (default: strict)")
+            self.console.print("  --keep-pks            Keep original primary key values (default: remap auto-generated PKs)")
             return
 
         table_name = args[0]
@@ -131,6 +132,7 @@ class REPL:
         schema = self.config.db.schema
         timeframe_specs: list[str] = []
         wide_mode = False
+        keep_pks = False  # Default: remap auto-generated PKs
 
         i = 2
         while i < len(args):
@@ -145,6 +147,9 @@ class REPL:
                 i += 2
             elif args[i] == "--wide":
                 wide_mode = True
+                i += 1
+            elif args[i] == "--keep-pks":
+                keep_pks = True
                 i += 1
             else:
                 i += 1
@@ -200,7 +205,7 @@ class REPL:
 
             # Generate SQL
             generator = SQLGenerator(introspector, batch_size=self.config.sql_batch_size)
-            sql = generator.generate_batch(sorted_records)
+            sql = generator.generate_batch(sorted_records, keep_pks=keep_pks)
 
             # Output
             if output_file:

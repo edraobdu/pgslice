@@ -40,6 +40,7 @@ class Column:
     nullable: bool
     default: str | None = None
     is_primary_key: bool = False
+    is_auto_generated: bool = False  # True for SERIAL, BIGSERIAL, IDENTITY columns
 
 
 @dataclass(frozen=True)

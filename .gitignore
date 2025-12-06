@@ -148,3 +148,6 @@ Thumbs.db
 .snippy_history
 schema_cache.db
 output/
+
+# AI
+CLAUDE.md

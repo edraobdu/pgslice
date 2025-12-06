@@ -5,12 +5,9 @@ import pytest
 from snippy.utils.exceptions import (
     DBReverseDumpError,
     ConnectionError,
-    ReadOnlyViolationError,
-    SchemaIntrospectionError,
-    TableNotFoundError,
+    SchemaError,
     CircularDependencyError,
     InvalidTimeframeError,
-    InvalidIdentifierError,
 )
 
 
@@ -33,26 +30,14 @@ class TestExceptionHierarchy:
         assert str(exc) == "Connection failed"
 
     def test_read_only_violation_error(self):
-        """Test ReadOnlyViolationError inherits from DBReverseDumpError."""
-        exc = ReadOnlyViolationError("Read-only mode violated")
+        """Test Con inherits from DBReverseDumpError."""
+        exc = ConnectionError("Read-only mode violated")
 
         assert isinstance(exc, DBReverseDumpError)
         assert str(exc) == "Read-only mode violated"
 
-    def test_schema_introspection_error(self):
-        """Test SchemaIntrospectionError inherits from DBReverseDumpError."""
-        exc = SchemaIntrospectionError("Schema introspection failed")
-
         assert isinstance(exc, DBReverseDumpError)
         assert str(exc) == "Schema introspection failed"
-
-    def test_table_not_found_error(self):
-        """Test TableNotFoundError inherits from SchemaIntrospectionError."""
-        exc = TableNotFoundError("Table not found")
-
-        assert isinstance(exc, SchemaIntrospectionError)
-        assert isinstance(exc, DBReverseDumpError)
-        assert str(exc) == "Table not found"
 
     def test_circular_dependency_error(self):
         """Test CircularDependencyError inherits from DBReverseDumpError."""
@@ -67,13 +52,6 @@ class TestExceptionHierarchy:
 
         assert isinstance(exc, DBReverseDumpError)
         assert str(exc) == "Invalid timeframe specification"
-
-    def test_invalid_identifier_error(self):
-        """Test InvalidIdentifierError inherits from DBReverseDumpError."""
-        exc = InvalidIdentifierError("Invalid SQL identifier")
-
-        assert isinstance(exc, DBReverseDumpError)
-        assert str(exc) == "Invalid SQL identifier"
 
 
 class TestExceptionInstantiation:
@@ -120,12 +98,8 @@ class TestExceptionInstantiation:
         """Test all custom exceptions can be caught as DBReverseDumpError."""
         exceptions = [
             ConnectionError("test"),
-            ReadOnlyViolationError("test"),
-            SchemaIntrospectionError("test"),
-            TableNotFoundError("test"),
             CircularDependencyError("test"),
             InvalidTimeframeError("test"),
-            InvalidIdentifierError("test"),
         ]
 
         for exc in exceptions:

@@ -17,8 +17,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY pyproject.toml .
 
-# Install package in editable mode
-RUN pip install -e .
+# Install package in editable mode with dev dependencies
+RUN pip install -e ".[dev]"
 
 # Create directory for cache
 RUN mkdir -p /root/.cache/snippy

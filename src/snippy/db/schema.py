@@ -49,7 +49,7 @@ class SchemaIntrospector:
             fk_outgoing = self._get_foreign_keys_outgoing(schema, table)
             fk_incoming = self._get_foreign_keys_incoming(schema, table)
 
-            # Mark PK columns
+            # Mark PK columns and detect auto-generated columns
             pk_set = set(primary_keys)
             columns = [
                 Column(
@@ -58,6 +58,10 @@ class SchemaIntrospector:
                     nullable=col.nullable,
                     default=col.default,
                     is_primary_key=col.name in pk_set,
+                    is_auto_generated=(
+                        col.name in pk_set
+                        and self._is_auto_generated_column(schema, table, col.name)
+                    ),
                 )
                 for col in columns
             ]
@@ -154,6 +158,70 @@ class SchemaIntrospector:
 
         logger.debug(f"Primary keys for {schema}.{table}: {primary_keys}")
         return primary_keys
+
+    def _is_auto_generated_column(self, schema: str, table: str, column: str) -> bool:
+        """
+        Detect if a column is auto-generated (SERIAL, BIGSERIAL, IDENTITY).
+
+        Checks:
+        1. Column has associated sequence (pg_get_serial_sequence)
+        2. Column is IDENTITY column (attidentity)
+        3. Column default contains 'nextval('
+
+        Args:
+            schema: Schema name
+            table: Table name
+            column: Column name
+
+        Returns:
+            True if column is auto-generated
+        """
+        query = """
+            SELECT
+                pg_get_serial_sequence(%s || '.' || %s, %s) IS NOT NULL as has_sequence,
+                a.attidentity IN ('a', 'd') as is_identity,
+                col.column_default
+            FROM pg_attribute a
+            JOIN pg_class c ON a.attrelid = c.oid
+            JOIN pg_namespace n ON c.relnamespace = n.oid
+            LEFT JOIN information_schema.columns col
+                ON col.table_schema = n.nspname
+                AND col.table_name = c.relname
+                AND col.column_name = a.attname
+            WHERE n.nspname = %s
+                AND c.relname = %s
+                AND a.attname = %s
+                AND a.attnum > 0
+                AND NOT a.attisdropped
+        """
+
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute(query, (schema, table, column, schema, table, column))
+                row = cur.fetchone()
+
+            if not row:
+                return False
+
+            has_sequence, is_identity, column_default = row
+
+            # Check if it's a SERIAL/BIGSERIAL (has sequence)
+            if has_sequence:
+                return True
+
+            # Check if it's an IDENTITY column
+            if is_identity:
+                return True
+
+            # Check if default contains nextval (fallback for edge cases)
+            if column_default and 'nextval(' in column_default.lower():
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.warning(f"Could not check if {schema}.{table}.{column} is auto-generated: {e}")
+            return False
 
     def _get_foreign_keys_outgoing(self, schema: str, table: str) -> list[ForeignKey]:
         """

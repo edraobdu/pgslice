@@ -3,7 +3,7 @@
 import pytest
 
 from snippy.db.schema import SchemaIntrospector
-from snippy.utils.exceptions import TableNotFoundError, SchemaIntrospectionError
+from snippy.utils.exceptions import SchemaError
 
 
 @pytest.mark.integration
@@ -118,7 +118,7 @@ class TestSchemaIntrospectorWithDatabase:
         """Test error when table doesn't exist."""
         introspector = SchemaIntrospector(test_db_connection)
 
-        with pytest.raises(TableNotFoundError) as exc_info:
+        with pytest.raises(SchemaError) as exc_info:
             introspector.get_table_metadata("public", "nonexistent_table")
 
         assert "nonexistent_table" in str(exc_info.value)
@@ -127,7 +127,7 @@ class TestSchemaIntrospectorWithDatabase:
         """Test error when schema doesn't exist."""
         introspector = SchemaIntrospector(test_db_connection)
 
-        with pytest.raises(TableNotFoundError):
+        with pytest.raises(SchemaError):
             introspector.get_table_metadata("invalid_schema", "users")
 
     def test_get_all_tables(self, test_db_connection):
