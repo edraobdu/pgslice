@@ -1,0 +1,4 @@
+psycopg[binary]>=3.2.2
+prompt-toolkit==3.0.43
+rich==13.7.0
+python-dotenv==1.0.0

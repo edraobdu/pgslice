@@ -1,0 +1,402 @@
+"""Bidirectional relationship traversal via foreign keys."""
+
+from collections import deque
+from datetime import datetime
+from typing import Any
+
+import psycopg
+
+from ..db.schema import SchemaIntrospector
+from ..graph.models import RecordData, RecordIdentifier, Table, TimeframeFilter
+from ..graph.visited_tracker import VisitedTracker
+from ..utils.exceptions import RecordNotFoundError
+from ..utils.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+class RelationshipTraverser:
+    """
+    Traverses database relationships bidirectionally using BFS.
+
+    Follows both forward FK references (this record -> other records)
+    and reverse FK references (other records -> this record).
+    """
+
+    def __init__(
+        self,
+        connection: psycopg.Connection[Any],
+        schema_introspector: SchemaIntrospector,
+        visited_tracker: VisitedTracker,
+        timeframe_filters: list[TimeframeFilter] | None = None,
+        wide_mode: bool = False,
+    ) -> None:
+        """
+        Initialize relationship traverser.
+
+        Args:
+            connection: Active database connection
+            schema_introspector: Schema introspection utility
+            visited_tracker: Visited record tracker
+            timeframe_filters: Optional timeframe filters for specific tables
+            wide_mode: If True, follow incoming FKs from all records (wide/exploratory).
+                      If False (default), only follow incoming FKs from starting records
+                      and records reached via incoming FKs (strict mode, prevents fan-out).
+        """
+        self.conn = connection
+        self.introspector = schema_introspector
+        self.visited = visited_tracker
+        self.table_cache: dict[str, Table] = {}
+        self.timeframe_filters = {
+            f.table_name: f for f in (timeframe_filters or [])
+        }
+        self.wide_mode = wide_mode
+
+    def traverse(
+        self,
+        table_name: str,
+        pk_value: Any,
+        schema: str = "public",
+        max_depth: int | None = None,
+    ) -> set[RecordData]:
+        """
+        Traverse relationships from a starting record.
+
+        Algorithm:
+        1. Start with initial record (table + PK)
+        2. Use BFS with queue of (RecordIdentifier, depth)
+        3. For each record:
+           - Skip if already visited
+           - Mark as visited
+           - Fetch record data
+           - Follow outgoing FKs (forward relationships)
+           - Follow incoming FKs (reverse relationships)
+        4. Continue until queue empty
+
+        Args:
+            table_name: Starting table name
+            pk_value: Primary key value
+            schema: Schema name (default: public)
+            max_depth: Optional maximum traversal depth
+
+        Returns:
+            Set of all discovered RecordData objects
+
+        Raises:
+            RecordNotFoundError: If starting record doesn't exist
+        """
+        start_id = self._create_record_identifier(schema, table_name, (pk_value,))
+        # Queue now tracks: (record_id, depth, follow_incoming_fks)
+        # follow_incoming_fks=True for starting records and records reached via incoming FKs
+        # follow_incoming_fks=False for records reached via outgoing FKs (dependencies)
+        queue: deque[tuple[RecordIdentifier, int, bool]] = deque([(start_id, 0, True)])
+        results: set[RecordData] = set()
+
+        logger.info(f"Starting traversal from {start_id}")
+
+        while queue:
+            record_id, depth, follow_incoming_fks = queue.popleft()
+
+            # Check depth limit
+            if max_depth is not None and depth > max_depth:
+                logger.debug(f"Skipping {record_id}: depth {depth} > max {max_depth}")
+                continue
+
+            # Skip if already visited
+            if self.visited.is_visited(record_id):
+                logger.debug(f"Skipping {record_id}: already visited")
+                continue
+
+            # Mark as visited BEFORE fetching to prevent re-queueing
+            self.visited.mark_visited(record_id)
+
+            # Fetch record data
+            try:
+                record_data = self._fetch_record(record_id)
+            except RecordNotFoundError:
+                logger.warning(f"Record not found: {record_id}")
+                continue
+
+            results.add(record_data)
+            logger.debug(
+                f"Fetched {record_id} at depth {depth} ({len(results)} total records)"
+            )
+
+            # Get table metadata
+            table = self._get_table_metadata(record_id.schema_name, record_id.table_name)
+
+            # Traverse outgoing FKs (forward relationships)
+            for fk in table.foreign_keys_outgoing:
+                target_id = self._resolve_foreign_key_target(record_data, fk)
+                if target_id:
+                    # ALWAYS add dependency (even if target already visited)
+                    # This ensures correct SQL ordering when inserting records
+                    record_data.dependencies.add(target_id)
+                    logger.debug(f"  -> Dependency: {record_data.identifier} depends on {target_id}")
+
+                    # Only traverse if not visited
+                    # In strict mode: dependencies should NOT follow incoming FKs (prevents fan-out)
+                    # In wide mode: all records can follow incoming FKs
+                    if not self.visited.is_visited(target_id):
+                        follow_incoming = self.wide_mode
+                        queue.append((target_id, depth + 1, follow_incoming))
+                        logger.debug(f"  -> Following outgoing FK to {target_id}")
+
+            # Traverse incoming FKs (reverse relationships)
+            # Only follow incoming FKs if this record allows it
+            if follow_incoming_fks:
+                for fk in table.foreign_keys_incoming:
+                    logger.debug(f"  <- Processing incoming FK: {fk.source_table}, wide_mode={self.wide_mode}")
+                    # In strict mode, skip self-referencing FKs to prevent sibling expansion
+                    # Self-referencing FKs like users.manager_id -> users.id would find peers/siblings
+                    if not self.wide_mode:
+                        source_schema, source_table = self._parse_table_name(fk.source_table)
+                        logger.debug(f"  <- Checking FK: {fk.source_table} (parsed: {source_schema}.{source_table}) vs current: {record_id.schema_name}.{record_id.table_name}")
+                        if (source_schema == record_id.schema_name and
+                            source_table == record_id.table_name):
+                            logger.debug(f"  <- Skipping self-referencing FK from {source_schema}.{source_table} (strict mode)")
+                            continue
+
+                    source_records = self._find_referencing_records(record_id, fk)
+                    for source_id in source_records:
+                        if not self.visited.is_visited(source_id):
+                            # Records reached via incoming FKs CAN follow incoming FKs
+                            queue.append((source_id, depth + 1, True))
+                            logger.debug(f"  <- Following incoming FK from {source_id}")
+
+        logger.info(f"Traversal complete: {len(results)} records found")
+        return results
+
+    def traverse_multiple(
+        self,
+        table_name: str,
+        pk_values: list[Any],
+        schema: str = "public",
+        max_depth: int | None = None,
+    ) -> set[RecordData]:
+        """
+        Traverse from multiple starting records.
+
+        Efficiently handles shared relationships via visited tracking.
+
+        Args:
+            table_name: Starting table name
+            pk_values: List of primary key values
+            schema: Schema name (default: public)
+            max_depth: Optional maximum traversal depth
+
+        Returns:
+            Set of all discovered RecordData objects (union of all traversals)
+        """
+        all_records: set[RecordData] = set()
+
+        logger.info(f"Starting multi-record traversal from {schema}.{table_name}")
+        logger.info(f"Primary keys: {pk_values}")
+
+        for pk_value in pk_values:
+            records = self.traverse(table_name, pk_value, schema, max_depth)
+            all_records.update(records)
+
+        logger.info(
+            f"Multi-traversal complete: {len(all_records)} unique records found"
+        )
+        return all_records
+
+    def _fetch_record(self, record_id: RecordIdentifier) -> RecordData:
+        """
+        Fetch a single record by primary key.
+
+        Args:
+            record_id: Record identifier
+
+        Returns:
+            RecordData with fetched data
+
+        Raises:
+            RecordNotFoundError: If record doesn't exist
+        """
+        table = self._get_table_metadata(record_id.schema_name, record_id.table_name)
+
+        # Build WHERE clause for primary keys
+        if not table.primary_keys:
+            raise RecordNotFoundError(
+                f"Table {record_id.schema_name}.{record_id.table_name} has no primary key"
+            )
+
+        where_parts = []
+        params = []
+        for pk_col, pk_val in zip(table.primary_keys, record_id.pk_values):
+            where_parts.append(f'"{pk_col}" = %s')
+            params.append(pk_val)
+
+        # Apply timeframe filter if applicable
+        timeframe_clause = ""
+        if record_id.table_name in self.timeframe_filters:
+            filter_config = self.timeframe_filters[record_id.table_name]
+            timeframe_clause = f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
+            params.extend([filter_config.start_date, filter_config.end_date])
+
+        query = f"""
+            SELECT * FROM "{record_id.schema_name}"."{record_id.table_name}"
+            WHERE {' AND '.join(where_parts)}{timeframe_clause}
+        """
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            row = cur.fetchone()
+
+            if row is None:
+                raise RecordNotFoundError(f"Record not found: {record_id}")
+
+            # Convert row to dict
+            columns = [desc[0] for desc in cur.description]
+            data = dict(zip(columns, row))
+
+        return RecordData(identifier=record_id, data=data)
+
+    def _resolve_foreign_key_target(
+        self, record: RecordData, fk: Any
+    ) -> RecordIdentifier | None:
+        """
+        Extract FK value from record and create target RecordIdentifier.
+
+        Args:
+            record: Source record
+            fk: ForeignKey object
+
+        Returns:
+            Target RecordIdentifier or None if FK is NULL
+        """
+        fk_value = record.data.get(fk.source_column)
+
+        if fk_value is None:
+            logger.debug(f"NULL FK: {record.identifier} -> {fk.target_table}")
+            return None
+
+        # Parse target table (may be schema.table format)
+        schema, table = self._parse_table_name(fk.target_table)
+
+        return self._create_record_identifier(schema, table, (fk_value,))
+
+    def _find_referencing_records(
+        self, target_id: RecordIdentifier, fk: Any
+    ) -> list[RecordIdentifier]:
+        """
+        Find all records in source table that reference the target record.
+
+        Args:
+            target_id: Target record being referenced
+            fk: ForeignKey object
+
+        Returns:
+            List of RecordIdentifiers for all referencing records
+        """
+        # Parse source table
+        schema, table = self._parse_table_name(fk.source_table)
+
+        # Get primary keys for source table
+        source_table = self._get_table_metadata(schema, table)
+        if not source_table.primary_keys:
+            logger.warning(f"Table {schema}.{table} has no primary key, skipping")
+            return []
+
+        # Get the target PK value to match against
+        target_table = self._get_table_metadata(
+            target_id.schema_name, target_id.table_name
+        )
+        # Assuming single-column FK for now (multi-column FK support would need enhancement)
+        if len(target_id.pk_values) != 1:
+            logger.warning(f"Composite PK not fully supported for reverse FK: {target_id}")
+            target_pk_value = target_id.pk_values[0]
+        else:
+            target_pk_value = target_id.pk_values[0]
+
+        # Build query
+        pk_columns = ", ".join(f'"{pk}"' for pk in source_table.primary_keys)
+
+        # Apply timeframe filter if applicable
+        timeframe_clause = ""
+        params: list[Any] = [target_pk_value]
+
+        if table in self.timeframe_filters:
+            filter_config = self.timeframe_filters[table]
+            timeframe_clause = f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
+            params.extend([filter_config.start_date, filter_config.end_date])
+
+        query = f"""
+            SELECT {pk_columns}
+            FROM "{schema}"."{table}"
+            WHERE "{fk.source_column}" = %s{timeframe_clause}
+        """
+
+        # Debug logging for over-extraction investigation
+        logger.debug(
+            f"Finding records in {schema}.{table} "
+            f"where {fk.source_column} = {target_pk_value}"
+        )
+
+        results = []
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            for row in cur.fetchall():
+                # row contains PK values (may be tuple for composite PKs)
+                pk_values = row if isinstance(row, tuple) else (row,)
+                record_id = self._create_record_identifier(schema, table, pk_values)
+                results.append(record_id)
+
+        if results:
+            logger.debug(
+                f"Found {len(results)} records in {schema}.{table} "
+                f"referencing {target_id}: {[r.pk_values for r in results]}"
+            )
+
+        return results
+
+    def _get_table_metadata(self, schema: str, table: str) -> Table:
+        """
+        Get table metadata with caching.
+
+        Args:
+            schema: Schema name
+            table: Table name
+
+        Returns:
+            Table metadata
+        """
+        key = f"{schema}.{table}"
+        if key not in self.table_cache:
+            self.table_cache[key] = self.introspector.get_table_metadata(schema, table)
+        return self.table_cache[key]
+
+    def _create_record_identifier(
+        self, schema: str, table: str, pk_values: tuple[Any, ...]
+    ) -> RecordIdentifier:
+        """
+        Create RecordIdentifier with proper types.
+
+        Args:
+            schema: Schema name
+            table: Table name
+            pk_values: Tuple of primary key values
+
+        Returns:
+            RecordIdentifier
+        """
+        return RecordIdentifier(
+            schema_name=schema, table_name=table, pk_values=pk_values
+        )
+
+    def _parse_table_name(self, full_name: str) -> tuple[str, str]:
+        """
+        Parse 'schema.table' or just 'table' format.
+
+        Args:
+            full_name: Fully qualified or simple table name
+
+        Returns:
+            Tuple of (schema, table)
+        """
+        if "." in full_name:
+            parts = full_name.split(".", 1)
+            return parts[0], parts[1]
+        return "public", full_name

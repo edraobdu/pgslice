@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: db_reverse_dump_test_db
+    environment:
+      POSTGRES_DB: test_db
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./tests/test_data/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+      - ./tests/test_data/large_sample_data.sql:/docker-entrypoint-initdb.d/02-data.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: db_reverse_dump_app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: test_db
+      DB_USER: test_user
+      DB_SCHEMA: public
+      LOG_LEVEL: ERROR
+      # Set password as environment variable to avoid prompt in container
+      PGPASSWORD: test_pass
+    volumes:
+      - ./output:/app/output  # For saving SQL dumps
+    stdin_open: true  # Keep stdin open for interactive REPL
+    tty: true         # Allocate pseudo-TTY for interactive terminal
+    command: tail -f /dev/null  # Keep container running
+
+volumes:
+  postgres_data:
