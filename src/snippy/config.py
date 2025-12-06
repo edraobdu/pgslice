@@ -1,4 +1,4 @@
-"""Configuration management for db_reverse_dump."""
+"""Configuration management for snippy."""
 
 import os
 from dataclasses import dataclass
@@ -61,7 +61,7 @@ def load_config() -> AppConfig:
         DB_SCHEMA: Database schema (default: public)
         CACHE_ENABLED: Enable caching (default: true)
         CACHE_TTL_HOURS: Cache TTL in hours (default: 24)
-        DB_REVERSE_DUMP_CACHE_DIR: Cache directory
+        SNIPPY_CACHE_DIR: Cache directory
         CONNECTION_TTL_MINUTES: Connection TTL in minutes (default: 30)
         MAX_DEPTH: Maximum traversal depth (optional)
         LOG_LEVEL: Log level (default: INFO)
@@ -71,8 +71,8 @@ def load_config() -> AppConfig:
 
     # Determine cache directory
     cache_dir_str = os.getenv(
-        "DB_REVERSE_DUMP_CACHE_DIR",
-        str(Path.home() / ".cache" / "db_reverse_dump"),
+        "SNIPPY_CACHE_DIR",
+        str(Path.home() / ".cache" / "snippy"),
     )
     cache_dir = Path(cache_dir_str).expanduser()
 

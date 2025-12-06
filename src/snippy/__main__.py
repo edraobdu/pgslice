@@ -1,4 +1,4 @@
-"""Entry point for running as a module: python -m db_reverse_dump"""
+"""Entry point for running as a module: python -m snippy"""
 
 import sys
 

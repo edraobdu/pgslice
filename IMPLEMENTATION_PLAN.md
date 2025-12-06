@@ -1,4 +1,4 @@
-# Implementation Plan: db_reverse_dump
+# Implementation Plan: snippy
 
 ## Overview
 Create a Python CLI tool that extracts a PostgreSQL record and ALL its related records by following foreign key relationships bidirectionally, outputting SQL INSERT statements for database replication.
@@ -6,7 +6,7 @@ Create a Python CLI tool that extracts a PostgreSQL record and ALL its related r
 ## Project Structure
 
 ```
-db_reverse_dump/
+snippy/
 ├── pyproject.toml              # Project config, dependencies, tool settings
 ├── requirements.txt            # Pinned dependencies
 ├── requirements-dev.txt        # Dev dependencies
@@ -15,9 +15,9 @@ db_reverse_dump/
 ├── mypy.ini                    # MyPy strict configuration
 ├── README.md                   # Documentation
 │
-├── src/db_reverse_dump/
+├── src/snippy/
 │   ├── __init__.py
-│   ├── __main__.py             # Entry point: python -m db_reverse_dump
+│   ├── __main__.py             # Entry point: python -m snippy
 │   ├── cli.py                  # CLI argument parsing, main()
 │   ├── repl.py                 # Interactive REPL with prompt_toolkit
 │   ├── config.py               # Configuration management
@@ -172,7 +172,7 @@ ON CONFLICT (pk_cols) DO NOTHING;
 - `columns`: Store column metadata
 - `foreign_keys`: Store FK relationships
 
-**Location**: `~/.cache/db_reverse_dump/schema_cache.db`
+**Location**: `~/.cache/snippy/schema_cache.db`
 
 **TTL**: 24 hours (configurable)
 
@@ -205,7 +205,7 @@ ON CONFLICT (pk_cols) DO NOTHING;
 - `exit`, `quit` - Exit REPL
 
 **Features**:
-- Command history: `~/.db_reverse_dump_history`
+- Command history: `~/.snippy_history`
 - Auto-completion for commands and tables
 - Multi-line support (future)
 
@@ -327,9 +327,9 @@ Create realistic schema with:
 - Add CLI flag: `--allow-write-connection` to skip warning
 
 **Files to Modify**:
-- `src/db_reverse_dump/db/connection.py` - Add read-only mode check
-- `src/db_reverse_dump/cli.py` - Add CLI flags
-- `src/db_reverse_dump/utils/exceptions.py` - Add `ReadOnlyEnforcementError`
+- `src/snippy/db/connection.py` - Add read-only mode check
+- `src/snippy/cli.py` - Add CLI flags
+- `src/snippy/utils/exceptions.py` - Add `ReadOnlyEnforcementError`
 
 ### 2. Timeframe Filtering
 **Purpose**: Extract only recent data, reducing dump size
@@ -388,10 +388,10 @@ db> dump "users" 42 --timeframe "transactions:created_at:2024-01-01:2024-12-31"
 ```
 
 **Files to Modify**:
-- `src/db_reverse_dump/graph/models.py` - Add `TimeframeFilter` dataclass
-- `src/db_reverse_dump/graph/traverser.py` - Apply filters during traversal
-- `src/db_reverse_dump/repl.py` - Parse `--timeframe` argument
-- `src/db_reverse_dump/cli.py` - Support timeframe in CLI
+- `src/snippy/graph/models.py` - Add `TimeframeFilter` dataclass
+- `src/snippy/graph/traverser.py` - Apply filters during traversal
+- `src/snippy/repl.py` - Parse `--timeframe` argument
+- `src/snippy/cli.py` - Support timeframe in CLI
 
 **Edge Cases**:
 - Verify column exists and is timestamp type
@@ -455,9 +455,9 @@ db> dump "users" 42,123,456 --output users.sql
 ```
 
 **Files to Modify**:
-- `src/db_reverse_dump/graph/traverser.py` - Add `traverse_multiple()` method
-- `src/db_reverse_dump/repl.py` - Parse multiple IDs from command
-- `src/db_reverse_dump/cli.py` - Support multiple IDs
+- `src/snippy/graph/traverser.py` - Add `traverse_multiple()` method
+- `src/snippy/repl.py` - Parse multiple IDs from command
+- `src/snippy/cli.py` - Support multiple IDs
 
 **Edge Cases**:
 - Validate all IDs before starting
@@ -542,14 +542,14 @@ db> dump "users" 42,123,456 --output users.sql
 
 ## Critical Files for Implementation
 
-1. **src/db_reverse_dump/graph/models.py** - Foundation: all data models
-2. **src/db_reverse_dump/db/schema.py** - Schema introspection via PostgreSQL catalogs
-3. **src/db_reverse_dump/graph/traverser.py** - Core algorithm: bidirectional BFS
-4. **src/db_reverse_dump/dumper/dependency_sorter.py** - Topological sort for correct ordering
-5. **src/db_reverse_dump/dumper/sql_generator.py** - SQL generation with proper escaping
-6. **src/db_reverse_dump/cache/schema_cache.py** - SQLite caching layer
-7. **src/db_reverse_dump/repl.py** - Interactive terminal interface
-8. **src/db_reverse_dump/cli.py** - Main entry point
+1. **src/snippy/graph/models.py** - Foundation: all data models
+2. **src/snippy/db/schema.py** - Schema introspection via PostgreSQL catalogs
+3. **src/snippy/graph/traverser.py** - Core algorithm: bidirectional BFS
+4. **src/snippy/dumper/dependency_sorter.py** - Topological sort for correct ordering
+5. **src/snippy/dumper/sql_generator.py** - SQL generation with proper escaping
+6. **src/snippy/cache/schema_cache.py** - SQLite caching layer
+7. **src/snippy/repl.py** - Interactive terminal interface
+8. **src/snippy/cli.py** - Main entry point
 
 ## Configuration
 
@@ -570,10 +570,10 @@ LOG_LEVEL=INFO
 ```
 
 ### Cache Location
-`~/.cache/db_reverse_dump/schema_cache.db`
+`~/.cache/snippy/schema_cache.db`
 
 ### History
-`~/.db_reverse_dump_history`
+`~/.snippy_history`
 
 ## Docker Compose Setup
 
@@ -596,7 +596,7 @@ services:
 
 ### Start REPL with read-only enforcement
 ```bash
-db-reverse-dump --host localhost --port 5432 --user postgres --database mydb --require-read-only
+snippy --host localhost --port 5432 --user postgres --database mydb --require-read-only
 # Password: [prompt]
 # ⚠️  WARNING: Could not establish read-only connection!
 # ⚠️  Database allows write operations.
@@ -605,7 +605,7 @@ db-reverse-dump --host localhost --port 5432 --user postgres --database mydb --r
 
 ### Start REPL (normal mode)
 ```bash
-db-reverse-dump --host localhost --port 5432 --user postgres --database mydb
+snippy --host localhost --port 5432 --user postgres --database mydb
 # Password: [prompt]
 # Connection successful (READ-ONLY mode)
 # db>
@@ -697,8 +697,8 @@ db> describe "users"
 
 ## Next Steps After Planning
 
-1. Create project folder: `db_reverse_dump/`
-2. Copy this plan to `db_reverse_dump/IMPLEMENTATION_PLAN.md` for reference
+1. Create project folder: `snippy/`
+2. Copy this plan to `snippy/IMPLEMENTATION_PLAN.md` for reference
 3. Initialize with `pyproject.toml`
 4. Set up Docker Compose
 5. Implement Phase 1 (Foundation)

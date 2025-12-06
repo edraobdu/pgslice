@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: db_reverse_dump_test_db
+    container_name: snippy_test_db
     environment:
       POSTGRES_DB: test_db
       POSTGRES_USER: test_user
@@ -24,7 +24,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: db_reverse_dump_app
+    container_name: snippy_app
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,13 +1,13 @@
 # Docker Usage Guide
 
-This guide shows how to use `db_reverse_dump` with Docker, requiring no local Python installation.
+This guide shows how to use `snippy` with Docker, requiring no local Python installation.
 
 ## Quick Start
 
 ### 1. Build and Start Services
 
 ```bash
-cd db_reverse_dump
+cd snippy
 docker-compose up --build -d
 ```
 
@@ -18,7 +18,7 @@ This starts:
 ### 2. Access the Interactive REPL
 
 ```bash
-docker-compose exec app db-reverse-dump \
+docker-compose exec app snippy \
   --host postgres \
   --port 5432 \
   --user test_user \
@@ -73,7 +73,7 @@ Run a single command without staying in the REPL:
 
 ```bash
 docker-compose run --rm app bash -c "
-  echo 'test_pass' | db-reverse-dump \
+  echo 'test_pass' | snippy \
     --host postgres \
     --user test_user \
     --database test_db \
@@ -176,10 +176,10 @@ Make sure you're using `exec` (not `run`):
 
 ```bash
 # ✅ Correct - connects to running container
-docker-compose exec app db-reverse-dump ...
+docker-compose exec app snippy ...
 
 # ❌ Wrong - creates new container
-docker-compose run app db-reverse-dump ...
+docker-compose run app snippy ...
 ```
 
 ## Test Scenarios
@@ -253,7 +253,7 @@ environment:
 To dump from a different PostgreSQL database (not the test one):
 
 ```bash
-docker-compose run --rm app db-reverse-dump \
+docker-compose run --rm app snippy \
   --host your-db-host.com \
   --port 5432 \
   --user your_user \
@@ -270,7 +270,7 @@ docker-compose run --rm \
   -e DB_USER=your_user \
   -e DB_NAME=your_db \
   -e PGPASSWORD=your_password \
-  app db-reverse-dump \
+  app snippy \
     --host your-db-host.com \
     --user your_user \
     --database your_db \
@@ -282,7 +282,7 @@ docker-compose run --rm \
 For production dumps, **always** use `--require-read-only`:
 
 ```bash
-docker-compose run --rm app db-reverse-dump \
+docker-compose run --rm app snippy \
   --host production-db.com \
   --user readonly_user \
   --database prod_db \

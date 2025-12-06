@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Generate large test dataset for db_reverse_dump performance testing.
+Generate large test dataset for snippy performance testing.
 
 Usage:
     python generate_large_dataset.py > large_sample_data.sql

@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "db-reverse-dump"
+name = "snippy"
 version = "0.1.0"
 description = "Extract PostgreSQL records with all related data via FK relationships"
 readme = "README.md"
@@ -41,7 +41,7 @@ dev = [
 ]
 
 [project.scripts]
-db-reverse-dump = "db_reverse_dump.cli:main"
+snippy = "snippy.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -97,10 +97,10 @@ testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --cov=src/db_reverse_dump --cov-report=html --cov-report=term"
+addopts = "-v --cov=src/snippy --cov-report=html --cov-report=term"
 
 [tool.coverage.run]
-source = ["src/db_reverse_dump"]
+source = ["src/snippy"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

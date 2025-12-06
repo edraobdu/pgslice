@@ -21,10 +21,10 @@ COPY pyproject.toml .
 RUN pip install -e .
 
 # Create directory for cache
-RUN mkdir -p /root/.cache/db_reverse_dump
+RUN mkdir -p /root/.cache/snippy
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
 # Default command (can be overridden)
-CMD ["db-reverse-dump", "--help"]
+CMD ["snippy", "--help"]

@@ -145,6 +145,6 @@ Thumbs.db
 # Project specific
 *.sql.dump
 *_dump.sql
-.db_reverse_dump_history
+.snippy_history
 schema_cache.db
 output/

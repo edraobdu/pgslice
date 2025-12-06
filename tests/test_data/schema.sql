@@ -1,4 +1,4 @@
--- Test database schema for db_reverse_dump
+-- Test database schema for snippy
 -- Includes various FK patterns: forward, reverse, self-referencing, circular
 
 -- Roles table

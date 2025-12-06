@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 
 def main() -> int:
     """
-    Main entry point for db-reverse-dump CLI.
+    Main entry point for snippy CLI.
 
     Returns:
         Exit code (0 for success, non-zero for error)
@@ -94,7 +94,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="db-reverse-dump 0.1.0",
+        version="snippy 0.1.0",
     )
 
     args = parser.parse_args()

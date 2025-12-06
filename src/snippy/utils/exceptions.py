@@ -1,8 +1,8 @@
-"""Custom exceptions for db_reverse_dump."""
+"""Custom exceptions for snippy."""
 
 
 class DBReverseDumpError(Exception):
-    """Base exception for db_reverse_dump."""
+    """Base exception for snippy."""
 
     pass
 

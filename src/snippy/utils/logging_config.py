@@ -1,4 +1,4 @@
-"""Logging configuration for db_reverse_dump."""
+"""Logging configuration for snippy."""
 
 import logging
 import sys

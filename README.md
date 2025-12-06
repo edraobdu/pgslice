@@ -1,10 +1,10 @@
-# db-reverse-dump
+# snippy
 
 Extract PostgreSQL records with all related data via foreign key relationships.
 
 ## Overview
 
-`db-reverse-dump` is a Python CLI tool that extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. This is useful for:
+`snippy` is a Python CLI tool that extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. This is useful for:
 
 - Reproducing production bugs locally with real data
 - Creating partial database dumps for specific users/entities
@@ -31,13 +31,13 @@ Instead of dumping an entire database (which may be huge), extract only what you
 **No local Python installation required!**
 
 ```bash
-cd db_reverse_dump
+cd snippy
 
 # Start everything
 docker-compose up -d
 
 # Access the REPL
-docker-compose exec app db-reverse-dump \
+docker-compose exec app snippy \
   --host postgres \
   --port 5432 \
   --user test_user \
@@ -60,7 +60,7 @@ db> exit
 ```bash
 # Clone the repository
 git clone <repository-url>
-cd db_reverse_dump
+cd snippy
 
 # Create virtual environment
 python -m venv venv
@@ -78,7 +78,7 @@ pip install -e .
 ### Start the REPL
 
 ```bash
-db-reverse-dump --host localhost --port 5432 --user postgres --database mydb
+snippy --host localhost --port 5432 --user postgres --database mydb
 ```
 
 ### Basic Usage
@@ -172,7 +172,7 @@ db> dump "users" 42 \
 Enforce read-only connections:
 
 ```bash
-db-reverse-dump --host prod-db --require-read-only --database mydb
+snippy --host prod-db --require-read-only --database mydb
 ```
 
 If read-only mode isn't available, the tool will refuse to connect.
@@ -189,7 +189,7 @@ docker-compose up -d
 pytest
 
 # Run with coverage
-pytest --cov=src/db_reverse_dump --cov-report=html
+pytest --cov=src/snippy --cov-report=html
 
 # Run specific test file
 pytest tests/unit/test_schema.py

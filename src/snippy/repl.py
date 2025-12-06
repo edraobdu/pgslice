@@ -63,13 +63,13 @@ class REPL:
     def start(self) -> None:
         """Start the REPL."""
         # Create prompt session with history
-        history_file = Path.home() / ".db_reverse_dump_history"
+        history_file = Path.home() / ".snippy_history"
         self.session = PromptSession(
             history=FileHistory(str(history_file)),
             completer=WordCompleter(list(self.commands.keys()), ignore_case=True),
         )
 
-        self.console.print("\n[bold cyan]db-reverse-dump REPL[/bold cyan]")
+        self.console.print("\n[bold cyan]snippy REPL[/bold cyan]")
         self.console.print("Type 'help' for commands, 'exit' to quit\n")
 
         while True:
