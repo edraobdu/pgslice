@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Interactive REPL for database dumping."""
 
 import shlex

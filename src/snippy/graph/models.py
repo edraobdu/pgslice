@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Data models for database schema and record representation."""
 
 from dataclasses import dataclass, field

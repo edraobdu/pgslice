@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Security utilities for password handling and SQL sanitization."""
 
 import getpass

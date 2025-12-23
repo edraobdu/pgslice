@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """CLI argument parsing and main entry point."""
 
 import argparse

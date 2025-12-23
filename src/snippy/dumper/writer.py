@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """File output handling for SQL dumps."""
 
 from pathlib import Path

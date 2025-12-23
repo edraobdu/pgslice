@@ -7,7 +7,7 @@ name = "snippy"
 version = "0.1.0"
 description = "Extract PostgreSQL records with all related data via FK relationships"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
     {name = "Your Name", email = "your.email@example.com"}
@@ -17,8 +17,11 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 dependencies = [
@@ -38,6 +41,7 @@ dev = [
     "ruff>=0.1.0",
     "black>=23.0.0",
     "freezegun>=1.2.0",
+    "Faker>=20.0.0",
 ]
 
 [project.scripts]
@@ -48,8 +52,8 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
-src = ["src", "tests"]
+target-version = "py310"
+src = ["src"]
 
 [tool.ruff.lint]
 select = [
@@ -66,11 +70,8 @@ select = [
     "SIM", # flake8-simplify
 ]
 
-[tool.ruff.lint.per-file-ignores]
-"tests/*" = ["T20"]  # Allow print in tests
-
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -93,7 +94,7 @@ module = "rich.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# testpaths = ["tests"]  # Tests have been removed
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"

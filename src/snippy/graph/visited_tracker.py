@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Track visited records to prevent circular traversal."""
 
 from ..graph.models import RecordIdentifier

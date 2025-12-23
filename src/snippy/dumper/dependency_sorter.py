@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Topological sorting of records based on foreign key dependencies."""
 
 from collections import defaultdict, deque

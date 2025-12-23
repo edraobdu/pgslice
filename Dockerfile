@@ -1,30 +1,42 @@
-FROM python:3.11-slim
+# Multi-stage build with uv and Python 3.13
+# Note: Update to python3.14 when official Docker images are available
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy requirements first (for layer caching)
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy dependency files (including lockfile for reproducible builds)
+COPY pyproject.toml uv.lock README.md ./
 
 # Copy application source
 COPY src/ ./src/
-COPY pyproject.toml .
 
-# Install package in editable mode with dev dependencies
-RUN pip install -e ".[dev]"
+# Create virtual environment and install dependencies using lockfile
+# --frozen ensures exact versions from uv.lock are used
+RUN uv venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+RUN uv sync --frozen
 
-# Create directory for cache
-RUN mkdir -p /root/.cache/snippy
+# Runtime stage
+FROM python:3.13-slim
 
-# Set environment variables
+# Install runtime system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+
+# Copy application
+COPY --from=builder /app /app
+WORKDIR /app
+
+# Activate virtual environment
+ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
-# Default command (can be overridden)
+# Create cache directory
+RUN mkdir -p /root/.cache/snippy
+
+# Default command
 CMD ["snippy", "--help"]

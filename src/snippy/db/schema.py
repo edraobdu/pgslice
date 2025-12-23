@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """PostgreSQL schema introspection using system catalogs."""
 
 from typing import Any

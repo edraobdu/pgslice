@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Database connection management with TTL and read-only enforcement."""
 
 from datetime import datetime, timedelta

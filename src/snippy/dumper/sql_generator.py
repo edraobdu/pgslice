@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """SQL INSERT statement generation with proper escaping."""
 
 import json

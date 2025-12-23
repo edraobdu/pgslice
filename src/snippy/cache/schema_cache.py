@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """SQLite-based cache for database schema metadata."""
 
 import json

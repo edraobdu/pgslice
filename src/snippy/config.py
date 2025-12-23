@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Configuration management for snippy."""
 
 import os

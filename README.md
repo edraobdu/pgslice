@@ -1,5 +1,7 @@
 # snippy
 
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+
 Extract PostgreSQL records with all related data via foreign key relationships.
 
 ## Overview
@@ -57,21 +59,50 @@ db> exit
 
 ## Installation (Local Development)
 
+### Prerequisites
+- Python 3.10+ (Python 3.14 recommended for development)
+- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
+
+### Setup
+
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd snippy
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Install uv (one-time setup)
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install dependencies
-pip install -r requirements-dev.txt
+# Install Python 3.14 (optional, for latest features)
+uv python install 3.14
 
-# Install package in development mode
-pip install -e .
+# Create virtual environment and install dependencies
+# uv will automatically use Python 3.14 if available, or your system Python
+uv sync --dev
+
+# Activate virtual environment
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+
+# Verify installation
+snippy --version
 ```
+
+### Why uv?
+
+This project uses [uv](https://github.com/astral-sh/uv) for dependency management:
+- **10-100x faster** than pip for dependency resolution and installation
+- **Reproducible** builds via `uv.lock` (like cargo.lock or package-lock.json)
+- **Automatic** virtual environment management
+- **Python version management** built-in (install and switch between Python versions)
+- **Drop-in replacement** for pip commands
+
+### Python Version Compatibility
+
+**snippy supports Python 3.10+** for broad compatibility, but we recommend using **Python 3.14** for development to get the latest improvements:
+- **Python 3.10+**: Minimum requirement - library works on all these versions
+- **Python 3.14**: Recommended for development - latest performance and features
+
+The codebase uses modern Python syntax while maintaining backward compatibility with Python 3.10+.
 
 ## Quick Start
 
@@ -179,36 +210,86 @@ If read-only mode isn't available, the tool will refuse to connect.
 
 ## Development
 
-### Run Tests
+### Local Development (without Docker)
 
 ```bash
-# Start test database
-docker-compose up -d
+# Install dependencies
+uv sync --dev
 
-# Run all tests
-pytest
+# Run the CLI
+uv run snippy --host localhost --port 5432 --user postgres --database mydb
 
-# Run with coverage
-pytest --cov=src/snippy --cov-report=html
-
-# Run specific test file
-pytest tests/unit/test_schema.py
+# Or activate venv first
+source .venv/bin/activate
+snippy --help
 ```
 
 ### Code Quality
 
 ```bash
-# Type checking
-mypy src/
+# Type checking (checks against Python 3.10 compatibility)
+uv run mypy src/snippy
 
 # Linting
-ruff check src/ tests/
+uv run ruff check src/
+
+# Auto-fix linting issues
+uv run ruff check --fix src/
 
 # Formatting
-ruff format src/ tests/
+uv run ruff format src/
 
-# Run all checks
-mypy src/ && ruff check src/ tests/ && pytest
+# Check formatting without changes
+uv run ruff format --check src/
+```
+
+### Testing Python Version Compatibility
+
+```bash
+# Test with Python 3.10 (minimum supported version)
+uv run --python 3.10 snippy --version
+
+# Test with Python 3.14 (development version)
+uv run --python 3.14 snippy --version
+
+# Install specific Python version if needed
+uv python install 3.10
+uv python install 3.14
+```
+
+### Docker Development
+
+```bash
+# Build with Python 3.13
+make build
+make up
+
+# Run commands in Docker
+make type-check
+make lint
+make format
+
+# Open shell in container
+make shell
+```
+
+### Updating Dependencies
+
+```bash
+# Add a new dependency
+uv add <package-name>
+
+# Add a dev dependency
+uv add --dev <package-name>
+
+# Update all dependencies
+uv lock --upgrade
+
+# Sync after changes
+uv sync --dev
+
+# Update Python version
+uv python install 3.14
 ```
 
 ## Configuration

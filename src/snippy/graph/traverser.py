@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Bidirectional relationship traversal via foreign keys."""
 
 from collections import deque

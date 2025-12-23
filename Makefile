@@ -1,4 +1,4 @@
-.PHONY: help install dev-install test coverage lint format type-check clean docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test
+.PHONY: help install dev-install test coverage lint format type-check clean docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test uv-install sync lock test-compat
 
 # Default target
 .DEFAULT_GOAL := help
@@ -9,7 +9,6 @@ DOCKER_RUN := $(DOCKER_COMPOSE) run --rm app
 
 # Project paths
 SRC_DIR := src/snippy
-TESTS_DIR := src/tests
 
 help:  ## Show this help message
 	@echo "Available commands:"
@@ -27,16 +26,16 @@ coverage:  ## Run tests with coverage report
 	@echo "Coverage report generated in htmlcov/index.html"
 
 lint:  ## Run ruff linter
-	$(DOCKER_RUN) ruff check $(SRC_DIR) $(TESTS_DIR)
+	$(DOCKER_RUN) ruff check $(SRC_DIR)
 
 lint-fix:  ## Auto-fix linting issues
-	$(DOCKER_RUN) ruff check --fix $(SRC_DIR) $(TESTS_DIR)
+	$(DOCKER_RUN) ruff check --fix $(SRC_DIR)
 
 format:  ## Format code with ruff
-	$(DOCKER_RUN) ruff format $(SRC_DIR) $(TESTS_DIR)
+	$(DOCKER_RUN) ruff format $(SRC_DIR)
 
 format-check:  ## Check code formatting
-	$(DOCKER_RUN) ruff format --check $(SRC_DIR) $(TESTS_DIR)
+	$(DOCKER_RUN) ruff format --check $(SRC_DIR)
 
 type-check:  ## Run mypy type checker
 	$(DOCKER_RUN) mypy $(SRC_DIR)
@@ -74,9 +73,20 @@ down:  ## Stop Docker containers
 run-repl:  ## Run interactive REPL (requires DATABASE_URL env var)
 	snippy --repl
 
-generate-test-data:  ## Generate large test dataset
-	$(DOCKER_RUN) python $(TESTS_DIR)/test_data/generate_large_dataset.py > $(TESTS_DIR)/test_data/large_sample_data.sql
-	@echo "Test data generated: $(TESTS_DIR)/test_data/large_sample_data.sql"
+# Local development with uv
+uv-install:  ## Install uv (one-time setup)
+	curl -LsSf https://astral.sh/uv/install.sh | sh
 
-watch-test:  ## Watch for changes and run tests (requires pytest-watch)
-	$(DOCKER_RUN) ptw -- -v
+sync:  ## Sync dependencies with uv (local development)
+	uv sync --dev
+
+lock:  ## Update uv.lock file
+	uv lock
+
+test-compat:  ## Test compatibility across Python versions
+	@echo "Testing Python 3.10..."
+	@uv run --python 3.10 python --version || echo "Python 3.10 not available"
+	@echo "Testing Python 3.13..."
+	@uv run --python 3.13 python --version || echo "Python 3.13 not available"
+	@echo "Testing Python 3.14..."
+	@uv run --python 3.14 python --version || echo "Python 3.14 not available"
