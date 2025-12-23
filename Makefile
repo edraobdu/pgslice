@@ -1,6 +1,6 @@
 MAKEFLAGS += --no-print-directory --silent
 
-.PHONY: help install dev-install test coverage lint format type-check clean docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix lint-fix-all format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test uv-install sync lock test-compat setup imports
+.PHONY: help install dev-install test coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix lint-fix-all format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test uv-install sync lock test-compat setup imports
 
 # Default target
 .DEFAULT_GOAL := help
@@ -60,6 +60,32 @@ clean:  ## Remove build artifacts and cache
 	rm -rf .coverage
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
+
+# Python package building and publishing
+build-dist: clean  ## Build Python distribution packages (wheel + sdist)
+	@echo "Building distribution packages..."
+	uv build
+	@echo "Build complete! Packages in dist/"
+	@ls -lh dist/
+
+install-local: build-dist  ## Install package locally from built wheel
+	@echo "Installing from local build..."
+	uv pip install dist/*.whl --force-reinstall
+	@echo "Installation complete! Test with: snippy --version"
+
+publish-test: build-dist  ## Publish to TestPyPI for testing
+	@echo "Publishing to TestPyPI..."
+	uv publish --publish-url https://test.pypi.org/legacy/
+	@echo "Published to TestPyPI! Install with:"
+	@echo "  pip install --index-url https://test.pypi.org/simple/ snippy"
+
+publish: all-checks build-dist  ## Publish to production PyPI (requires confirmation)
+	@echo "WARNING: This will publish to production PyPI!"
+	@read -p "Version $$(grep '^version = ' pyproject.toml | cut -d'"' -f2) - Continue? [y/N] " confirm && \
+	[ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ] || (echo "Aborted." && exit 1)
+	@echo "Publishing to PyPI..."
+	uv publish
+	@echo "Published! Install with: pip install snippy"
 
 build:  ## Build Docker images
 	$(DOCKER_COMPOSE) build
