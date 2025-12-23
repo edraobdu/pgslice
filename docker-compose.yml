@@ -38,6 +38,7 @@ services:
     volumes:
       - ./src:/app/src              # Mount source code for hot-reloading
       - ./pyproject.toml:/app/pyproject.toml  # Mount project config
+      - ./uv.lock:/app/uv.lock  # Mount project config
       - ./output:/app/output        # For saving SQL dumps
     stdin_open: true  # Keep stdin open for interactive REPL
     tty: true         # Allocate pseudo-TTY for interactive terminal

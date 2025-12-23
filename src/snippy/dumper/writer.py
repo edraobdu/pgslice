@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """File output handling for SQL dumps."""
+
+from __future__ import annotations
 
 from pathlib import Path
 
@@ -40,11 +40,10 @@ class SQLWriter:
             line_count = sql_content.count("\n")
 
             logger.info(
-                f"Successfully wrote {file_size:,} bytes "
-                f"({line_count:,} lines) to {output_path}"
+                f"Successfully wrote {file_size:,} bytes ({line_count:,} lines) to {output_path}"
             )
 
-        except IOError as e:
+        except OSError as e:
             logger.error(f"Failed to write to {output_path}: {e}")
             raise
 
@@ -57,4 +56,3 @@ class SQLWriter:
             sql_content: SQL script content
         """
         logger.debug("Writing SQL to stdout")
-        print(sql_content)

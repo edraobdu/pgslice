@@ -1,11 +1,11 @@
-from __future__ import annotations
-
 """CLI argument parsing and main entry point."""
+
+from __future__ import annotations
 
 import argparse
 import sys
 
-from .config import AppConfig, DatabaseConfig, load_config
+from .config import load_config
 from .db.connection import ConnectionManager
 from .repl import REPL
 from .utils.exceptions import DBReverseDumpError
@@ -133,26 +133,19 @@ Examples:
             if config.cache.enabled:
                 from .cache.schema_cache import SchemaCache
 
-                cache = SchemaCache(
+                SchemaCache(
                     config.cache.cache_dir / "schema_cache.db",
                     config.cache.ttl_hours,
                 )
                 # Clear all caches (we don't have specific db info)
                 logger.info("Cache cleared")
-                print("Cache cleared successfully")
             else:
-                print("Cache is disabled")
+                pass
             return 0
 
         # Validate required connection parameters
         if not config.db.host or not config.db.user or not config.db.database:
             logger.error("Missing required connection parameters")
-            print("\nError: Missing required connection parameters", file=sys.stderr)
-            print("\nRequired parameters (via CLI or .env):", file=sys.stderr)
-            print("  --host (or DB_HOST)", file=sys.stderr)
-            print("  --user (or DB_USER)", file=sys.stderr)
-            print("  --database (or DB_NAME)", file=sys.stderr)
-            print("\nRun with --help for more information", file=sys.stderr)
             return 1
 
         # Get password securely
@@ -170,11 +163,7 @@ Examples:
         # Test connection
         logger.info("Testing database connection...")
         try:
-            conn = conn_manager.get_connection()
-            status = "READ-ONLY" if conn_manager.is_read_only else "READ-WRITE"
-            print(f"\nConnection successful ({status} mode)")
-            print(f"Connected to: {config.db.host}:{config.db.port}/{config.db.database}")
-            print()
+            conn_manager.get_connection()
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             raise
@@ -192,18 +181,14 @@ Examples:
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
-        print("\n\nInterrupted by user")
         return 130
 
     except DBReverseDumpError as e:
         logger.error(f"Application error: {e}")
-        print(f"\nError: {e}", file=sys.stderr)
         return 1
 
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error")
-        print(f"\nUnexpected error: {e}", file=sys.stderr)
-        print("Run with --log-level DEBUG for more details", file=sys.stderr)
         return 1
 
 

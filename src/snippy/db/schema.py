@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """PostgreSQL schema introspection using system catalogs."""
+
+from __future__ import annotations
 
 from typing import Any
 
@@ -216,13 +216,12 @@ class SchemaIntrospector:
                 return True
 
             # Check if default contains nextval (fallback for edge cases)
-            if column_default and 'nextval(' in column_default.lower():
-                return True
-
-            return False
+            return bool(column_default and "nextval(" in column_default.lower())
 
         except Exception as e:
-            logger.warning(f"Could not check if {schema}.{table}.{column} is auto-generated: {e}")
+            logger.warning(
+                f"Could not check if {schema}.{table}.{column} is auto-generated: {e}"
+            )
             return False
 
     def _get_foreign_keys_outgoing(self, schema: str, table: str) -> list[ForeignKey]:

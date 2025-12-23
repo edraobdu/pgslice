@@ -1,11 +1,10 @@
-from __future__ import annotations
-
 """Interactive REPL for database dumping."""
+
+from __future__ import annotations
 
 import shlex
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
@@ -32,7 +31,9 @@ logger = get_logger(__name__)
 class REPL:
     """Interactive REPL for database dumping."""
 
-    def __init__(self, connection_manager: ConnectionManager, config: AppConfig) -> None:
+    def __init__(
+        self, connection_manager: ConnectionManager, config: AppConfig
+    ) -> None:
         """
         Initialize REPL.
 
@@ -114,13 +115,21 @@ class REPL:
         Format: dump "table_name" pk_value[,pk_value,...] [--output file.sql] [--schema schema_name] [--timeframe "table:col:start:end"] [--wide]
         """
         if len(args) < 2:
-            self.console.print("[yellow]Usage: dump \"table_name\" pk_value [options][/yellow]")
+            self.console.print(
+                '[yellow]Usage: dump "table_name" pk_value [options][/yellow]'
+            )
             self.console.print("\nOptions:")
             self.console.print("  --output FILE         Output file path")
             self.console.print("  --schema SCHEMA       Schema name (default: public)")
-            self.console.print("  --timeframe SPEC      Timeframe filter (table:column:start:end)")
-            self.console.print("  --wide                Wide mode: follow all relationships (default: strict)")
-            self.console.print("  --keep-pks            Keep original primary key values (default: remap auto-generated PKs)")
+            self.console.print(
+                "  --timeframe SPEC      Timeframe filter (table:column:start:end)"
+            )
+            self.console.print(
+                "  --wide                Wide mode: follow all relationships (default: strict)"
+            )
+            self.console.print(
+                "  --keep-pks            Keep original primary key values (default: remap auto-generated PKs)"
+            )
             return
 
         table_name = args[0]
@@ -169,7 +178,9 @@ class REPL:
         # Execute dump
         pk_display = ", ".join(str(pk) for pk in pk_values)
         mode_display = "wide" if wide_mode else "strict"
-        self.console.print(f"\n[cyan]Dumping {schema}.{table_name} with PK(s): {pk_display} ({mode_display} mode)[/cyan]")
+        self.console.print(
+            f"\n[cyan]Dumping {schema}.{table_name} with PK(s): {pk_display} ({mode_display} mode)[/cyan]"
+        )
 
         if timeframe_filters:
             self.console.print("\n[yellow]Timeframe filters:[/yellow]")
@@ -206,7 +217,9 @@ class REPL:
             sorted_records = sorter.sort(records)
 
             # Generate SQL
-            generator = SQLGenerator(introspector, batch_size=self.config.sql_batch_size)
+            generator = SQLGenerator(
+                introspector, batch_size=self.config.sql_batch_size
+            )
             sql = generator.generate_batch(sorted_records, keep_pks=keep_pks)
 
             # Output
@@ -217,7 +230,6 @@ class REPL:
                 )
             else:
                 self.console.print("\n[dim]--- SQL Output ---[/dim]")
-                print(sql)
                 self.console.print("[dim]--- End SQL ---[/dim]\n")
 
         except DBReverseDumpError as e:
@@ -252,8 +264,10 @@ class REPL:
         self.console.print("\n[yellow]Examples:[/yellow]")
         self.console.print('  dump "users" 42 --output user_42.sql')
         self.console.print('  dump "users" 42,123,456 --output users.sql')
-        self.console.print('  dump "users" 42 --timeframe "orders:created_at:2024-01-01:2024-12-31"')
-        self.console.print('  tables')
+        self.console.print(
+            '  dump "users" 42 --timeframe "orders:created_at:2024-01-01:2024-12-31"'
+        )
+        self.console.print("  tables")
         self.console.print('  describe "users"')
         self.console.print()
 
@@ -286,7 +300,9 @@ class REPL:
     def _cmd_describe_table(self, args: list[str]) -> None:
         """Describe table structure."""
         if not args:
-            self.console.print("[yellow]Usage: describe \"table_name\" [--schema schema][/yellow]")
+            self.console.print(
+                '[yellow]Usage: describe "table_name" [--schema schema][/yellow]'
+            )
             return
 
         table_name = args[0]
@@ -324,11 +340,13 @@ class REPL:
 
             # Primary keys
             if table.primary_keys:
-                self.console.print(f"\n[green]Primary Keys:[/green] {', '.join(table.primary_keys)}")
+                self.console.print(
+                    f"\n[green]Primary Keys:[/green] {', '.join(table.primary_keys)}"
+                )
 
             # Foreign keys outgoing
             if table.foreign_keys_outgoing:
-                self.console.print(f"\n[yellow]Foreign Keys (Outgoing):[/yellow]")
+                self.console.print("\n[yellow]Foreign Keys (Outgoing):[/yellow]")
                 for fk in table.foreign_keys_outgoing:
                     self.console.print(
                         f"  {fk.source_column} → {fk.target_table}.{fk.target_column}"
@@ -336,7 +354,7 @@ class REPL:
 
             # Foreign keys incoming
             if table.foreign_keys_incoming:
-                self.console.print(f"\n[blue]Referenced By (Incoming):[/blue]")
+                self.console.print("\n[blue]Referenced By (Incoming):[/blue]")
                 for fk in table.foreign_keys_incoming:
                     self.console.print(
                         f"  {fk.source_table}.{fk.source_column} → {fk.target_column}"
@@ -355,9 +373,7 @@ class REPL:
 
         if self.cache:
             # Clear cache for current database
-            self.cache.invalidate_cache(
-                self.config.db.host, self.config.db.database
-            )
+            self.cache.invalidate_cache(self.config.db.host, self.config.db.database)
             self.console.print("[green]Cache cleared successfully[/green]")
         else:
             self.console.print("[yellow]Cache not initialized[/yellow]")
@@ -396,13 +412,13 @@ class REPL:
         # Parse dates
         try:
             start_date = datetime.fromisoformat(start_str)
-        except ValueError:
-            raise InvalidTimeframeError(f"Invalid start date: {start_str}")
+        except ValueError as e:
+            raise InvalidTimeframeError(f"Invalid start date: {start_str}") from e
 
         try:
             end_date = datetime.fromisoformat(end_str)
-        except ValueError:
-            raise InvalidTimeframeError(f"Invalid end date: {end_str}")
+        except ValueError as e:
+            raise InvalidTimeframeError(f"Invalid end date: {end_str}") from e
 
         return TimeframeFilter(
             table_name=table_name,

@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Topological sorting of records based on foreign key dependencies."""
+
+from __future__ import annotations
 
 from collections import defaultdict, deque
 
@@ -68,9 +68,9 @@ class DependencySorter:
         logger.debug(f"Built dependency graph with {len(graph)} nodes")
 
         # Kahn's algorithm: Start with nodes having no dependencies
-        queue: deque[RecordIdentifier] = deque([
-            node for node in record_map.keys() if in_degree[node] == 0
-        ])
+        queue: deque[RecordIdentifier] = deque(
+            [node for node in record_map if in_degree[node] == 0]
+        )
 
         sorted_records: list[RecordData] = []
         processed_count = 0
@@ -90,8 +90,12 @@ class DependencySorter:
         # Check for cycles
         if processed_count != len(records):
             # Find nodes that weren't processed (part of cycle)
-            unprocessed = set(record_map.keys()) - {r.identifier for r in sorted_records}
-            logger.error(f"Circular dependency detected involving {len(unprocessed)} records")
+            unprocessed = set(record_map.keys()) - {
+                r.identifier for r in sorted_records
+            }
+            logger.error(
+                f"Circular dependency detected involving {len(unprocessed)} records"
+            )
 
             # Log some examples of unprocessed records
             examples = list(unprocessed)[:5]
@@ -105,7 +109,7 @@ class DependencySorter:
         logger.info(f"Successfully sorted {len(sorted_records)} records")
         return sorted_records
 
-    def analyze_dependencies(self, records: set[RecordData]) -> dict[str, int]:
+    def analyze_dependencies(self, records: set[RecordData]) -> dict[str, int | float]:
         """
         Analyze dependency statistics.
 

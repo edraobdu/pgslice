@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Data models for database schema and record representation."""
+
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime

@@ -7,7 +7,7 @@ class DBReverseDumpError(Exception):
     pass
 
 
-class ConnectionError(DBReverseDumpError):
+class DBConnectionError(DBReverseDumpError):
     """Database connection error."""
 
     pass
@@ -37,7 +37,7 @@ class RecordNotFoundError(DBReverseDumpError):
     pass
 
 
-class PermissionError(DBReverseDumpError):
+class DBPermissionError(DBReverseDumpError):
     """Database permission denied."""
 
     pass

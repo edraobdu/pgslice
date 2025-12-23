@@ -1,9 +1,8 @@
-from __future__ import annotations
-
 """Bidirectional relationship traversal via foreign keys."""
 
+from __future__ import annotations
+
 from collections import deque
-from datetime import datetime
 from typing import Any
 
 import psycopg
@@ -49,9 +48,7 @@ class RelationshipTraverser:
         self.introspector = schema_introspector
         self.visited = visited_tracker
         self.table_cache: dict[str, Table] = {}
-        self.timeframe_filters = {
-            f.table_name: f for f in (timeframe_filters or [])
-        }
+        self.timeframe_filters = {f.table_name: f for f in (timeframe_filters or [])}
         self.wide_mode = wide_mode
 
     def traverse(
@@ -125,7 +122,9 @@ class RelationshipTraverser:
             )
 
             # Get table metadata
-            table = self._get_table_metadata(record_id.schema_name, record_id.table_name)
+            table = self._get_table_metadata(
+                record_id.schema_name, record_id.table_name
+            )
 
             # Traverse outgoing FKs (forward relationships)
             for fk in table.foreign_keys_outgoing:
@@ -134,7 +133,9 @@ class RelationshipTraverser:
                     # ALWAYS add dependency (even if target already visited)
                     # This ensures correct SQL ordering when inserting records
                     record_data.dependencies.add(target_id)
-                    logger.debug(f"  -> Dependency: {record_data.identifier} depends on {target_id}")
+                    logger.debug(
+                        f"  -> Dependency: {record_data.identifier} depends on {target_id}"
+                    )
 
                     # Only traverse if not visited
                     # In strict mode: dependencies should NOT follow incoming FKs (prevents fan-out)
@@ -148,15 +149,25 @@ class RelationshipTraverser:
             # Only follow incoming FKs if this record allows it
             if follow_incoming_fks:
                 for fk in table.foreign_keys_incoming:
-                    logger.debug(f"  <- Processing incoming FK: {fk.source_table}, wide_mode={self.wide_mode}")
+                    logger.debug(
+                        f"  <- Processing incoming FK: {fk.source_table}, wide_mode={self.wide_mode}"
+                    )
                     # In strict mode, skip self-referencing FKs to prevent sibling expansion
                     # Self-referencing FKs like users.manager_id -> users.id would find peers/siblings
                     if not self.wide_mode:
-                        source_schema, source_table = self._parse_table_name(fk.source_table)
-                        logger.debug(f"  <- Checking FK: {fk.source_table} (parsed: {source_schema}.{source_table}) vs current: {record_id.schema_name}.{record_id.table_name}")
-                        if (source_schema == record_id.schema_name and
-                            source_table == record_id.table_name):
-                            logger.debug(f"  <- Skipping self-referencing FK from {source_schema}.{source_table} (strict mode)")
+                        source_schema, source_table = self._parse_table_name(
+                            fk.source_table
+                        )
+                        logger.debug(
+                            f"  <- Checking FK: {fk.source_table} (parsed: {source_schema}.{source_table}) vs current: {record_id.schema_name}.{record_id.table_name}"
+                        )
+                        if (
+                            source_schema == record_id.schema_name
+                            and source_table == record_id.table_name
+                        ):
+                            logger.debug(
+                                f"  <- Skipping self-referencing FK from {source_schema}.{source_table} (strict mode)"
+                            )
                             continue
 
                     source_records = self._find_referencing_records(record_id, fk)
@@ -227,7 +238,9 @@ class RelationshipTraverser:
 
         where_parts = []
         params = []
-        for pk_col, pk_val in zip(table.primary_keys, record_id.pk_values):
+        for pk_col, pk_val in zip(
+            table.primary_keys, record_id.pk_values, strict=False
+        ):
             where_parts.append(f'"{pk_col}" = %s')
             params.append(pk_val)
 
@@ -240,7 +253,7 @@ class RelationshipTraverser:
 
         query = f"""
             SELECT * FROM "{record_id.schema_name}"."{record_id.table_name}"
-            WHERE {' AND '.join(where_parts)}{timeframe_clause}
+            WHERE {" AND ".join(where_parts)}{timeframe_clause}
         """
 
         with self.conn.cursor() as cur:
@@ -251,8 +264,8 @@ class RelationshipTraverser:
                 raise RecordNotFoundError(f"Record not found: {record_id}")
 
             # Convert row to dict
-            columns = [desc[0] for desc in cur.description]
-            data = dict(zip(columns, row))
+            columns = [desc[0] for desc in (cur.description or [])]
+            data = dict(zip(columns, row, strict=False))
 
         return RecordData(identifier=record_id, data=data)
 
@@ -303,12 +316,12 @@ class RelationshipTraverser:
             return []
 
         # Get the target PK value to match against
-        target_table = self._get_table_metadata(
-            target_id.schema_name, target_id.table_name
-        )
+        self._get_table_metadata(target_id.schema_name, target_id.table_name)
         # Assuming single-column FK for now (multi-column FK support would need enhancement)
         if len(target_id.pk_values) != 1:
-            logger.warning(f"Composite PK not fully supported for reverse FK: {target_id}")
+            logger.warning(
+                f"Composite PK not fully supported for reverse FK: {target_id}"
+            )
             target_pk_value = target_id.pk_values[0]
         else:
             target_pk_value = target_id.pk_values[0]
@@ -333,8 +346,7 @@ class RelationshipTraverser:
 
         # Debug logging for over-extraction investigation
         logger.debug(
-            f"Finding records in {schema}.{table} "
-            f"where {fk.source_column} = {target_pk_value}"
+            f"Finding records in {schema}.{table} where {fk.source_column} = {target_pk_value}"
         )
 
         results = []

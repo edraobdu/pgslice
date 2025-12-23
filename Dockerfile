@@ -1,42 +1,46 @@
-# Multi-stage build with uv and Python 3.13
-# Note: Update to python3.14 when official Docker images are available
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+# Use a Python image with uv pre-installed
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
 
-WORKDIR /app
-
-# Copy dependency files (including lockfile for reproducible builds)
-COPY pyproject.toml uv.lock README.md ./
-
-# Copy application source
-COPY src/ ./src/
-
-# Create virtual environment and install dependencies using lockfile
-# --frozen ensures exact versions from uv.lock are used
-RUN uv venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-RUN uv sync --frozen
-
-# Runtime stage
-FROM python:3.13-slim
-
-# Install runtime system dependencies
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-
-# Copy application
-COPY --from=builder /app /app
+# Install the project into `/app`
 WORKDIR /app
 
-# Activate virtual environment
-ENV PATH="/opt/venv/bin:$PATH"
+# Enable bytecode compilation for faster startup
+ENV UV_COMPILE_BYTECODE=1
+
+# Copy from the cache instead of linking since it's a mounted volume
+ENV UV_LINK_MODE=copy
+
+# Install dependencies first (without the project) for better layer caching
+# This allows Docker to cache dependencies separately from source code changes
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --frozen --no-install-project
+
+# Copy the rest of the project source code
+COPY . /app
+
+# Install the project itself
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
+
+# Place executables in the environment at the front of the path
+# This makes the venv "active" without manual activation
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Set environment variables
 ENV PYTHONUNBUFFERED=1
 
 # Create cache directory
 RUN mkdir -p /root/.cache/snippy
+
+# Reset the entrypoint, don't invoke `uv`
+ENTRYPOINT []
 
 # Default command
 CMD ["snippy", "--help"]

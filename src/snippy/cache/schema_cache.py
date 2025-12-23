@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """SQLite-based cache for database schema metadata."""
+
+from __future__ import annotations
 
 import json
 import sqlite3
@@ -320,7 +320,10 @@ class SchemaCache:
                 target_schema, target_table = self._parse_table_name(fk.target_table)
 
                 # Ensure source and target tables exist
-                for schema, tbl in [(source_schema, source_table), (target_schema, target_table)]:
+                for schema, tbl in [
+                    (source_schema, source_table),
+                    (target_schema, target_table),
+                ]:
                     conn.execute(
                         """
                         INSERT OR IGNORE INTO tables (db_host, db_name, schema_name, table_name, primary_keys)

@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Configuration management for snippy."""
+
+from __future__ import annotations
 
 import os
 from dataclasses import dataclass
@@ -92,7 +92,9 @@ def load_config() -> AppConfig:
             enabled=os.getenv("CACHE_ENABLED", "true").lower() == "true",
         ),
         connection_ttl_minutes=int(os.getenv("CONNECTION_TTL_MINUTES", "30")),
-        max_depth=int(os.getenv("MAX_DEPTH")) if os.getenv("MAX_DEPTH") else None,
+        max_depth=int(max_depth_str)
+        if (max_depth_str := os.getenv("MAX_DEPTH"))
+        else None,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         require_read_only=os.getenv("REQUIRE_READ_ONLY", "false").lower() == "true",
         allow_write_connection=os.getenv("ALLOW_WRITE_CONNECTION", "false").lower()

@@ -39,9 +39,9 @@ dev = [
     "pytest-asyncio>=0.21.0",
     "mypy>=1.5.0",
     "ruff>=0.1.0",
-    "black>=23.0.0",
     "freezegun>=1.2.0",
     "Faker>=20.0.0",
+    "pre-commit>=3.0.0",
 ]
 
 [project.scripts]
@@ -51,7 +51,7 @@ snippy = "snippy.cli:main"
 where = ["src"]
 
 [tool.ruff]
-line-length = 100
+line-length = 88
 target-version = "py310"
 src = ["src"]
 
@@ -69,6 +69,11 @@ select = [
     "T20", # flake8-print
     "SIM", # flake8-simplify
 ]
+
+# Black-compatible settings: Ignore line-too-long for strings
+# This is standard practice for SQL queries and log messages
+ignore = ["E501"]
+
 
 [tool.mypy]
 python_version = "3.10"

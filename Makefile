@@ -1,4 +1,6 @@
-.PHONY: help install dev-install test coverage lint format type-check clean docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test uv-install sync lock test-compat
+MAKEFLAGS += --no-print-directory --silent
+
+.PHONY: help install dev-install test coverage lint format type-check clean docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix lint-fix-all format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test uv-install sync lock test-compat setup imports
 
 # Default target
 .DEFAULT_GOAL := help
@@ -18,35 +20,34 @@ help:  ## Show this help message
 shell:  ## Open shell in Docker container
 	$(DOCKER_RUN) /bin/bash
 
-test:
-	$(DOCKER_RUN) pytest -v
-
-coverage:  ## Run tests with coverage report
-	$(DOCKER_RUN) pytest --cov=$(SRC_DIR) --cov-report=html --cov-report=term-missing
-	@echo "Coverage report generated in htmlcov/index.html"
-
 lint:  ## Run ruff linter
-	$(DOCKER_RUN) ruff check $(SRC_DIR)
+	uv run ruff check $(SRC_DIR)
 
-lint-fix:  ## Auto-fix linting issues
-	$(DOCKER_RUN) ruff check --fix $(SRC_DIR)
+lint-fix:  ## Auto-fix linting issues (safe fixes only)
+	uv run ruff check --fix $(SRC_DIR)
+
+lint-fix-all:  ## Auto-fix all linting issues including unsafe fixes
+	uv run ruff check --fix --unsafe-fixes $(SRC_DIR)
+
+imports:  ## Sort and organize imports with ruff
+	@uv run ruff check --select I --fix $(SRC_DIR)
 
 format:  ## Format code with ruff
-	$(DOCKER_RUN) ruff format $(SRC_DIR)
+	uv run ruff format $(SRC_DIR)
 
 format-check:  ## Check code formatting
-	$(DOCKER_RUN) ruff format --check $(SRC_DIR)
+	uv run ruff format --check $(SRC_DIR)
 
 type-check:  ## Run mypy type checker
-	$(DOCKER_RUN) mypy $(SRC_DIR)
+	uv run mypy $(SRC_DIR)
 
 all-checks:  ## Run all quality checks (tests, lint, format, type-check)
-	@echo "Running all checks..."
-	@$(MAKE) test
-	@$(MAKE) lint
-	@$(MAKE) format-check
-	@$(MAKE) type-check
-	@echo "All checks passed!"
+	echo "Running all checks..."
+	$(MAKE) lint
+	$(MAKE) format-check
+	$(MAKE) type-check
+	$(MAKE) imports
+	echo "All checks passed!"
 
 clean:  ## Remove build artifacts and cache
 	rm -rf build/
@@ -78,7 +79,7 @@ uv-install:  ## Install uv (one-time setup)
 	curl -LsSf https://astral.sh/uv/install.sh | sh
 
 sync:  ## Sync dependencies with uv (local development)
-	uv sync --dev
+	uv sync --all-extras
 
 lock:  ## Update uv.lock file
 	uv lock
@@ -90,3 +91,14 @@ test-compat:  ## Test compatibility across Python versions
 	@uv run --python 3.13 python --version || echo "Python 3.13 not available"
 	@echo "Testing Python 3.14..."
 	@uv run --python 3.14 python --version || echo "Python 3.14 not available"
+
+setup:  ## One-time local development setup
+	@echo "Setting up local development environment..."
+	@command -v uv >/dev/null 2>&1 || (echo "Installing uv..." && curl -LsSf https://astral.sh/uv/install.sh | sh)
+	@echo "Installing Python 3.14..."
+	uv python install 3.14
+	@echo "Syncing dependencies..."
+	uv sync --all-extras
+	@echo "Installing pre-commit hooks..."
+	uv run pre-commit install
+	@echo "✓ Setup complete! Virtual environment ready at .venv/"

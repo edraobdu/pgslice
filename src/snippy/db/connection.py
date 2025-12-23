@@ -1,6 +1,6 @@
-from __future__ import annotations
-
 """Database connection management with TTL and read-only enforcement."""
+
+from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any
@@ -8,8 +8,7 @@ from typing import Any
 import psycopg
 
 from ..config import DatabaseConfig
-from ..utils.exceptions import ConnectionError as DBConnectionError
-from ..utils.exceptions import ReadOnlyEnforcementError
+from ..utils.exceptions import DBConnectionError, ReadOnlyEnforcementError
 from ..utils.logging_config import get_logger
 from ..utils.security import SecureCredentials
 
@@ -103,12 +102,13 @@ class ConnectionManager:
                     )
                 elif not self.allow_write_connection:
                     # Warn user but continue
-                    logger.warning("⚠️  WARNING: Could not establish read-only connection!")
+                    logger.warning(
+                        "⚠️  WARNING: Could not establish read-only connection!"
+                    )
                     logger.warning("⚠️  Database allows write operations.")
                     logger.warning(
                         "⚠️  This tool only performs SELECT queries, but proceed with caution."
                     )
-                    print()  # Empty line for visibility
                     response = input("Continue? [y/N]: ").strip().lower()
                     if response not in ("y", "yes"):
                         self._close_connection()
@@ -197,7 +197,7 @@ class ConnectionManager:
         """Check if current connection is read-only."""
         return self._is_read_only
 
-    def __enter__(self) -> "ConnectionManager":
+    def __enter__(self) -> ConnectionManager:
         """Context manager entry."""
         return self
 
