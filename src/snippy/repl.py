@@ -6,11 +6,11 @@ import shlex
 from datetime import datetime
 from pathlib import Path
 
+from printy import printy, raw_format
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
-from rich.console import Console
-from rich.table import Table as RichTable
+from tabulate import tabulate
 
 from .cache.schema_cache import SchemaCache
 from .config import AppConfig
@@ -43,7 +43,6 @@ class REPL:
         """
         self.conn_manager = connection_manager
         self.config = config
-        self.console = Console()
         self.session: PromptSession[str] | None = None
 
         # Initialize cache if enabled
@@ -72,13 +71,13 @@ class REPL:
             completer=WordCompleter(list(self.commands.keys()), ignore_case=True),
         )
 
-        self.console.print("\n[bold cyan]snippy REPL[/bold cyan]")
-        self.console.print("Type 'help' for commands, 'exit' to quit\n")
+        printy("\n[cB]snippy REPL@")
+        printy("Type 'help' for commands, 'exit' to quit\n")
 
         while True:
             try:
                 # Get user input
-                user_input = self.session.prompt("db> ")
+                user_input = self.session.prompt("snippy> ")
 
                 if not user_input.strip():
                     continue
@@ -87,7 +86,7 @@ class REPL:
                 try:
                     parts = shlex.split(user_input)
                 except ValueError as e:
-                    self.console.print(f"[red]Error parsing command: {e}[/red]")
+                    printy(f"[r]Error parsing command: {e}@")
                     continue
 
                 command = parts[0].lower()
@@ -97,8 +96,8 @@ class REPL:
                 if command in self.commands:
                     self.commands[command](args)
                 else:
-                    self.console.print(f"[red]Unknown command: {command}[/red]")
-                    self.console.print("Type 'help' for available commands")
+                    printy(f"[r]Unknown command: {command}@")
+                    printy("Type 'help' for available commands")
 
             except KeyboardInterrupt:
                 continue
@@ -106,7 +105,7 @@ class REPL:
                 break
             except Exception as e:
                 logger.exception("Error executing command")
-                self.console.print(f"[red]Error: {e}[/red]")
+                printy(f"[r]Error: {e}@")
 
     def _cmd_dump(self, args: list[str]) -> None:
         """
@@ -115,19 +114,15 @@ class REPL:
         Format: dump "table_name" pk_value[,pk_value,...] [--output file.sql] [--schema schema_name] [--timeframe "table:col:start:end"] [--wide]
         """
         if len(args) < 2:
-            self.console.print(
-                '[yellow]Usage: dump "table_name" pk_value [options][/yellow]'
-            )
-            self.console.print("\nOptions:")
-            self.console.print("  --output FILE         Output file path")
-            self.console.print("  --schema SCHEMA       Schema name (default: public)")
-            self.console.print(
-                "  --timeframe SPEC      Timeframe filter (table:column:start:end)"
-            )
-            self.console.print(
+            printy('[y]Usage: dump "table_name" pk_value [options]@')
+            printy("\nOptions:")
+            printy("  --output FILE         Output file path")
+            printy("  --schema SCHEMA       Schema name (default: public)")
+            printy("  --timeframe SPEC      Timeframe filter (table:column:start:end)")
+            printy(
                 "  --wide                Wide mode: follow all relationships (default: strict)"
             )
-            self.console.print(
+            printy(
                 "  --keep-pks            Keep original primary key values (default: remap auto-generated PKs)"
             )
             return
@@ -172,20 +167,20 @@ class REPL:
                 tf = self._parse_timeframe(spec)
                 timeframe_filters.append(tf)
             except InvalidTimeframeError as e:
-                self.console.print(f"[red]Invalid timeframe: {e}[/red]")
+                printy(f"[r]Invalid timeframe: {e}@")
                 return
 
         # Execute dump
         pk_display = ", ".join(str(pk) for pk in pk_values)
         mode_display = "wide" if wide_mode else "strict"
-        self.console.print(
-            f"\n[cyan]Dumping {schema}.{table_name} with PK(s): {pk_display} ({mode_display} mode)[/cyan]"
+        printy(
+            f"\n[c]Dumping {schema}.{table_name} with PK(s): {pk_display} ({mode_display} mode)@"
         )
 
         if timeframe_filters:
-            self.console.print("\n[yellow]Timeframe filters:[/yellow]")
+            printy("\n[y]Timeframe filters:@")
             for tf in timeframe_filters:
-                self.console.print(f"  - {tf}")
+                printy(f"  - {tf}")
 
         try:
             # Get connection
@@ -210,7 +205,7 @@ class REPL:
                     table_name, pk_values, schema, self.config.max_depth
                 )
 
-            self.console.print(f"\n[green]Found {len(records)} related records[/green]")
+            printy(f"\n[g]Found {len(records)} related records@")
 
             # Sort by dependencies
             sorter = DependencySorter()
@@ -225,55 +220,63 @@ class REPL:
             # Output
             if output_file:
                 SQLWriter.write_to_file(sql, output_file)
-                self.console.print(
-                    f"[green]Wrote {len(sorted_records)} INSERT statements to {output_file}[/green]"
+                printy(
+                    f"[g]Wrote {len(sorted_records)} INSERT statements to {output_file}@"
                 )
             else:
-                self.console.print("\n[dim]--- SQL Output ---[/dim]")
-                self.console.print("[dim]--- End SQL ---[/dim]\n")
+                # Use default output path
+                default_path = SQLWriter.get_default_output_path(
+                    self.config.output_dir,
+                    table_name,
+                    pk_values[0],  # Use first PK for filename
+                    schema,
+                )
+                SQLWriter.write_to_file(sql, str(default_path))
+                printy(
+                    f"[g]Wrote {len(sorted_records)} INSERT statements to {default_path}@"
+                )
 
         except DBReverseDumpError as e:
-            self.console.print(f"[red]Error: {e}[/red]")
+            printy(f"[r]Error: {e}@")
         except Exception as e:
             logger.exception("Error during dump")
-            self.console.print(f"[red]Unexpected error: {e}[/red]")
+            printy(f"[r]Unexpected error: {e}@")
 
     def _cmd_help(self, args: list[str]) -> None:
         """Display help information."""
-        help_table = RichTable(title="Available Commands", show_header=True)
-        help_table.add_column("Command", style="cyan", no_wrap=True)
-        help_table.add_column("Description")
-
-        help_table.add_row(
-            "dump TABLE PK [options]",
-            "Extract a record and all related records\n"
-            "Options: --output FILE, --schema SCHEMA, --timeframe SPEC",
+        printy("\n[IB]Available Commands@\n")
+        help_data = [
+            [
+                "dump TABLE PK [options]",
+                "Extract a record and all related records\nOptions: --output FILE, --schema SCHEMA, --timeframe SPEC",
+            ],
+            ["tables [--schema SCHEMA]", "List all tables in the database"],
+            ["describe TABLE [--schema]", "Show table structure and relationships"],
+            ["clear", "Clear schema cache"],
+            ["help", "Show this help message"],
+            ["exit, quit", "Exit the REPL"],
+        ]
+        print(
+            tabulate(
+                help_data,
+                headers=[
+                    raw_format("Command", flags="B"),
+                    raw_format("Description", flags="B"),
+                ],
+                tablefmt="simple",
+            )
         )
-        help_table.add_row(
-            "tables [--schema SCHEMA]", "List all tables in the database"
-        )
-        help_table.add_row(
-            "describe TABLE [--schema SCHEMA]", "Show table structure and relationships"
-        )
-        help_table.add_row("clear", "Clear schema cache")
-        help_table.add_row("help", "Show this help message")
-        help_table.add_row("exit, quit", "Exit the REPL")
-
-        self.console.print("\n")
-        self.console.print(help_table)
-        self.console.print("\n[yellow]Examples:[/yellow]")
-        self.console.print('  dump "users" 42 --output user_42.sql')
-        self.console.print('  dump "users" 42,123,456 --output users.sql')
-        self.console.print(
-            '  dump "users" 42 --timeframe "orders:created_at:2024-01-01:2024-12-31"'
-        )
-        self.console.print("  tables")
-        self.console.print('  describe "users"')
-        self.console.print()
+        printy("\n[y]Examples:@")
+        print('  dump "users" 42 --output user_42.sql')
+        print('  dump "users" 42,123,456 --output users.sql')
+        print('  dump "users" 42 --timeframe "orders:created_at:2024-01-01:2024-12-31"')
+        print("  tables")
+        print('  describe "users"')
+        print()
 
     def _cmd_exit(self, args: list[str]) -> None:
         """Exit the REPL."""
-        self.console.print("\n[cyan]Goodbye![/cyan]")
+        printy("\n[c]Goodbye!@")
         raise EOFError()
 
     def _cmd_list_tables(self, args: list[str]) -> None:
@@ -289,20 +292,18 @@ class REPL:
             introspector = SchemaIntrospector(conn)
             tables = introspector.get_all_tables(schema)
 
-            self.console.print(f"\n[cyan]Tables in schema '{schema}':[/cyan]\n")
+            printy(f"\n[c]Tables in schema '{schema}':@\n")
             for table in tables:
-                self.console.print(f"  {table}")
-            self.console.print(f"\n[green]Total: {len(tables)} tables[/green]\n")
+                printy(f"  {table}")
+            printy(f"\n[g]Total: {len(tables)} tables@\n")
 
         except Exception as e:
-            self.console.print(f"[red]Error: {e}[/red]")
+            printy(f"[r]Error: {e}@")
 
     def _cmd_describe_table(self, args: list[str]) -> None:
         """Describe table structure."""
         if not args:
-            self.console.print(
-                '[yellow]Usage: describe "table_name" [--schema schema][/yellow]'
-            )
+            printy('[y]Usage: describe "table_name" [--schema schema]@')
             return
 
         table_name = args[0]
@@ -317,66 +318,66 @@ class REPL:
             introspector = SchemaIntrospector(conn)
             table = introspector.get_table_metadata(schema, table_name)
 
-            self.console.print(f"\n[cyan]Table: {table.full_name}[/cyan]\n")
+            printy(f"\n[c]Table: {table.full_name}@\n")
 
             # Columns
-            col_table = RichTable(title="Columns", show_header=True)
-            col_table.add_column("Name", style="cyan")
-            col_table.add_column("Type", style="yellow")
-            col_table.add_column("Nullable", style="magenta")
-            col_table.add_column("Default")
-            col_table.add_column("PK", style="green")
-
+            printy("\n[cB]Columns@")
+            col_data = []
             for col in table.columns:
-                col_table.add_row(
-                    col.name,
-                    col.data_type,
-                    "YES" if col.nullable else "NO",
-                    col.default or "",
-                    "✓" if col.is_primary_key else "",
+                pk_indicator = "✓" if col.is_primary_key else ""
+                col_data.append(
+                    [
+                        col.name,
+                        col.data_type,
+                        "YES" if col.nullable else "NO",
+                        col.default or "",
+                        pk_indicator,
+                    ]
                 )
-
-            self.console.print(col_table)
+            table_str = tabulate(
+                col_data,
+                headers=["Name", "Type", "Nullable", "Default", "PK"],
+                tablefmt="simple",
+            )
+            printy(table_str)
 
             # Primary keys
             if table.primary_keys:
-                self.console.print(
-                    f"\n[green]Primary Keys:[/green] {', '.join(table.primary_keys)}"
-                )
+                printy(f"\n[g]Primary Keys:@ {', '.join(table.primary_keys)}")
 
             # Foreign keys outgoing
             if table.foreign_keys_outgoing:
-                self.console.print("\n[yellow]Foreign Keys (Outgoing):[/yellow]")
+                printy("\n[y]Foreign Keys (Outgoing):@")
                 for fk in table.foreign_keys_outgoing:
-                    self.console.print(
+                    printy(
                         f"  {fk.source_column} → {fk.target_table}.{fk.target_column}"
                     )
 
             # Foreign keys incoming
             if table.foreign_keys_incoming:
-                self.console.print("\n[blue]Referenced By (Incoming):[/blue]")
+                printy("\n[b]Referenced By (Incoming):@")
                 for fk in table.foreign_keys_incoming:
-                    self.console.print(
+                    printy(
                         f"  {fk.source_table}.{fk.source_column} → {fk.target_column}"
                     )
 
-            self.console.print()
+            printy()
 
         except Exception as e:
-            self.console.print(f"[red]Error: {e}[/red]")
+            printy(f"[r]Error: {e}@")
 
     def _cmd_clear_cache(self, args: list[str]) -> None:
         """Clear schema cache."""
         if not self.config.cache.enabled:
-            self.console.print("[yellow]Cache is disabled[/yellow]")
+            printy("[y]Cache is disabled@")
             return
 
         if self.cache:
             # Clear cache for current database
             self.cache.invalidate_cache(self.config.db.host, self.config.db.database)
-            self.console.print("[green]Cache cleared successfully[/green]")
+            printy("[g]Cache cleared successfully@")
         else:
-            self.console.print("[yellow]Cache not initialized[/yellow]")
+            printy("[y]Cache not initialized@")
 
     def _parse_timeframe(self, spec: str) -> TimeframeFilter:
         """

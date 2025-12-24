@@ -38,7 +38,8 @@ class Column:
     """Represents a database column."""
 
     name: str
-    data_type: str  # Store as string, convert to ColumnType as needed
+    data_type: str  # "ARRAY", "integer", "text", etc. from information_schema.columns
+    udt_name: str  # "_text", "int4", "text", etc. - PostgreSQL's underlying type name
     nullable: bool
     default: str | None = None
     is_primary_key: bool = False
@@ -78,6 +79,9 @@ class Table:
     primary_keys: list[str]
     foreign_keys_outgoing: list[ForeignKey]  # FKs from this table to others
     foreign_keys_incoming: list[ForeignKey]  # FKs from other tables to this one
+    unique_constraints: dict[str, list[str]] = field(
+        default_factory=dict
+    )  # Constraint name -> column names
 
     @property
     def full_name(self) -> str:
@@ -92,6 +96,13 @@ class RecordIdentifier:
     table_name: str
     schema_name: str
     pk_values: tuple[Any, ...]  # Support composite primary keys
+
+    def __post_init__(self) -> None:
+        """Normalize pk_values to strings for consistent equality."""
+        # Convert all PK values to strings for consistent comparison
+        normalized = tuple(str(v) for v in self.pk_values)
+        # Use object.__setattr__ because dataclass is frozen
+        object.__setattr__(self, "pk_values", normalized)
 
     def __hash__(self) -> int:
         """Make hashable for use in sets (visited tracking)."""

@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from ..db.schema import SchemaIntrospector
-from ..graph.models import RecordData, RecordIdentifier
+from ..graph.models import RecordData, RecordIdentifier, Table
 from ..utils.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -30,6 +30,8 @@ class SQLGenerator:
         self.introspector = schema_introspector
         # 0 or -1 means unlimited batch size
         self.batch_size = batch_size if batch_size > 0 else 999999
+        # Cache column type mappings per table to avoid repeated lookups
+        self._column_type_cache: dict[tuple[str, str], dict[str, tuple[str, str]]] = {}
 
     def generate_bulk_insert(self, records: list[RecordData]) -> str:
         """
@@ -56,10 +58,16 @@ class SQLGenerator:
         columns = sorted(first_record.data.keys())
         columns_sql = ", ".join(f'"{col}"' for col in columns)
 
+        # Get column type mapping for array/JSON distinction
+        column_type_map = self._get_column_types(schema, table)
+
         # Build VALUES rows
         values_rows = []
         for record in records:
-            values = [self._format_value(record.data.get(col)) for col in columns]
+            values = [
+                self._format_value(record.data.get(col), column_type_map.get(col))
+                for col in columns
+            ]
             values_sql = ", ".join(values)
             values_rows.append(f"    ({values_sql})")
 
@@ -151,14 +159,20 @@ class SQLGenerator:
         # BEFORE grouping by table, deduplicate based on RecordIdentifier
         seen_identifiers: set[RecordIdentifier] = set()
         unique_records: list[RecordData] = []
+        duplicate_count = 0
+
         for record in records:
             if record.identifier not in seen_identifiers:
                 seen_identifiers.add(record.identifier)
                 unique_records.append(record)
             else:
+                duplicate_count += 1
                 logger.warning(
-                    f"Duplicate record detected and skipped: {record.identifier}"
+                    f"Duplicate #{duplicate_count} detected and skipped: {record.identifier}"
                 )
+
+        if duplicate_count > 0:
+            logger.info(f"Deduplicated {duplicate_count} duplicate record(s)")
 
         # Group unique records by table (preserving dependency order within each table)
         records_by_table: dict[tuple[str, str], list[RecordData]] = defaultdict(list)
@@ -183,12 +197,166 @@ class SQLGenerator:
         logger.info(f"Generated SQL script ({len(result)} bytes)")
         return result
 
-    def _format_value(self, value: Any) -> str:
+    def _get_column_types(self, schema: str, table: str) -> dict[str, tuple[str, str]]:
+        """
+        Get column type mapping with caching.
+
+        Args:
+            schema: Schema name
+            table: Table name
+
+        Returns:
+            Dictionary mapping column names to (data_type, udt_name) tuples
+        """
+        key = (schema, table)
+        if key not in self._column_type_cache:
+            table_metadata = self.introspector.get_table_metadata(schema, table)
+            self._column_type_cache[key] = {
+                c.name: (c.data_type, c.udt_name) for c in table_metadata.columns
+            }
+        return self._column_type_cache[key]
+
+    def _is_array_type(self, data_type: str) -> bool:
+        """
+        Check if a PostgreSQL data type is an array type.
+
+        PostgreSQL returns "ARRAY" in information_schema.columns.data_type
+        for all array types (text[], integer[], etc.)
+
+        Args:
+            data_type: PostgreSQL data_type from information_schema
+
+        Returns:
+            True if the type is an array type
+        """
+        return data_type.upper() == "ARRAY"
+
+    def _get_array_element_type(self, udt_name: str) -> str:
+        """
+        Extract the element type from PostgreSQL's udt_name.
+
+        PostgreSQL array types have udt_name with underscore prefix:
+        - "_text" → element type is "text"
+        - "_int4" → element type is "integer"
+        - "_varchar" → element type is "varchar"
+
+        Args:
+            udt_name: PostgreSQL udt_name from information_schema
+
+        Returns:
+            Element type name suitable for ARRAY[...]::type[] syntax
+
+        Examples:
+            "_text" → "text"
+            "_int4" → "integer"
+            "_varchar" → "varchar"
+        """
+        if udt_name.startswith("_"):
+            element_udt = udt_name[1:]  # Remove underscore prefix
+
+            # Map PostgreSQL internal names to SQL type names
+            type_mapping = {
+                "int4": "integer",
+                "int2": "smallint",
+                "int8": "bigint",
+                "float4": "real",
+                "float8": "double precision",
+                "bool": "boolean",
+                # Most others (text, varchar, uuid, etc.) use the same name
+            }
+
+            return type_mapping.get(element_udt, element_udt)
+
+        return udt_name
+
+    def _format_array_value(self, value: list[Any], element_type: str) -> str:
+        """
+        Format a Python list as a PostgreSQL array literal.
+
+        Uses ARRAY[...] syntax with explicit type casting for clarity and safety.
+
+        Args:
+            value: Python list to format
+            element_type: PostgreSQL type of array elements
+
+        Returns:
+            PostgreSQL array literal string
+
+        Examples:
+            ['foo', 'bar'], 'text' -> ARRAY['foo', 'bar']::text[]
+            [1, 2, 3], 'integer' -> ARRAY[1, 2, 3]::integer[]
+            [], 'text' -> ARRAY[]::text[]
+        """
+        # Check for nested arrays (multidimensional)
+        if value and isinstance(value[0], list):
+            logger.warning(
+                f"Multidimensional arrays not yet supported, using JSON: {value}"
+            )
+            # Fall back to JSON formatting
+            json_str = json.dumps(value)
+            escaped = json_str.replace("'", "''")
+            return f"'{escaped}'"
+
+        if not value:
+            # Empty array
+            return f"ARRAY[]::{element_type}[]"
+
+        # Determine if element type needs quoting
+        text_types = {
+            "text",
+            "character varying",
+            "varchar",
+            "char",
+            "character",
+            "uuid",
+        }
+        numeric_types = {
+            "integer",
+            "bigint",
+            "smallint",
+            "int",
+            "numeric",
+            "decimal",
+            "real",
+            "double precision",
+            "float",
+        }
+        boolean_types = {"boolean", "bool"}
+
+        formatted_elements = []
+        element_type_lower = element_type.lower()
+
+        for item in value:
+            if item is None:
+                formatted_elements.append("NULL")
+            elif element_type_lower in text_types or element_type in text_types:
+                # Text types: escape quotes and backslashes
+                escaped = str(item).replace("'", "''").replace("\\", "\\\\")
+                formatted_elements.append(f"'{escaped}'")
+            elif element_type_lower in numeric_types:
+                # Numeric types: no quotes
+                formatted_elements.append(str(item))
+            elif element_type_lower in boolean_types:
+                # Boolean types
+                formatted_elements.append("TRUE" if item else "FALSE")
+            else:
+                # Fallback: treat as string
+                escaped = str(item).replace("'", "''").replace("\\", "\\\\")
+                formatted_elements.append(f"'{escaped}'")
+
+        elements_str = ", ".join(formatted_elements)
+        return f"ARRAY[{elements_str}]::{element_type}[]"
+
+    def _format_value(
+        self, value: Any, column_type_info: tuple[str, str] | None = None
+    ) -> str:
         """
         Format a Python value as SQL literal.
 
         Args:
             value: Python value to format
+            column_type_info: Optional (data_type, udt_name) tuple from information_schema
+                            Used to distinguish between JSON and array types
 
         Returns:
             SQL literal string
@@ -200,7 +368,8 @@ class SQLGenerator:
         - Strings (with proper escaping)
         - Dates, times, timestamps
         - UUIDs
-        - JSON/JSONB (dict, list)
+        - PostgreSQL arrays (list with array column type)
+        - JSON/JSONB (dict, list with json/jsonb column type, or no type info)
         - Bytea (bytes)
         """
         if value is None:
@@ -241,7 +410,17 @@ class SQLGenerator:
             return f"'{str(value)}'"
 
         elif isinstance(value, (dict, list)):
-            # JSON/JSONB - serialize and escape
+            # CRITICAL: Distinguish between PostgreSQL arrays and JSON
+            if column_type_info and isinstance(value, list):
+                data_type, udt_name = column_type_info
+                if self._is_array_type(data_type):
+                    element_type = self._get_array_element_type(udt_name)
+                    return self._format_array_value(value, element_type)
+
+            # Fall through to JSON handling for:
+            # - dict values (always JSON)
+            # - list values with json/jsonb column type
+            # - list values with no type info (backward compatibility)
             json_str = json.dumps(value)
             escaped = json_str.replace("'", "''")
             return f"'{escaped}'"
@@ -253,7 +432,7 @@ class SQLGenerator:
 
         elif isinstance(value, memoryview):
             # Convert memoryview to bytes
-            return self._format_value(bytes(value))
+            return self._format_value(bytes(value), column_type_info)
 
         else:
             # Fallback: convert to string and escape
@@ -293,14 +472,20 @@ class SQLGenerator:
         # 1. Deduplicate records (same as duplicate bug fix)
         seen_identifiers: set[RecordIdentifier] = set()
         unique_records: list[RecordData] = []
+        duplicate_count = 0
+
         for record in records:
             if record.identifier not in seen_identifiers:
                 seen_identifiers.add(record.identifier)
                 unique_records.append(record)
             else:
+                duplicate_count += 1
                 logger.warning(
-                    f"Duplicate record detected and skipped: {record.identifier}"
+                    f"Duplicate #{duplicate_count} detected and skipped: {record.identifier}"
                 )
+
+        if duplicate_count > 0:
+            logger.info(f"Deduplicated {duplicate_count} duplicate record(s)")
 
         # 2. Group by table (preserving dependency order)
         records_by_table: dict[tuple[str, str], list[RecordData]] = defaultdict(list)
@@ -442,6 +627,25 @@ class SQLGenerator:
         """Check if table has any auto-generated PK columns."""
         return len(self._get_auto_generated_pk_columns(schema, table)) > 0
 
+    def _parse_table_name(self, qualified_name: str) -> tuple[str, str]:
+        """
+        Parse a fully qualified table name into (schema, table).
+
+        Args:
+            qualified_name: Format "schema.table" or just "table"
+
+        Returns:
+            (schema, table) tuple
+
+        Examples:
+            "public.film" → ("public", "film")
+            "film" → ("public", "film")  # Default to public
+        """
+        if "." in qualified_name:
+            parts = qualified_name.split(".", 1)
+            return (parts[0], parts[1])
+        return ("public", qualified_name)  # Default schema
+
     def _get_fk_columns_to_remap(
         self, schema: str, table: str, tables_with_remapped_ids: set[tuple[str, str]]
     ) -> dict[str, tuple[str, str]]:
@@ -460,12 +664,9 @@ class SQLGenerator:
         fk_to_remap = {}
 
         for fk in table_meta.foreign_keys_outgoing:
-            # Parse target schema and table from FK
-            # ForeignKey has: source_table, source_column, target_table, target_column
-            # We need to determine the target schema
-            # For simplicity, assume same schema unless specified
-            target_schema = schema  # Default to same schema
-            target_table = fk.target_table
+            # Parse the fully qualified target table name
+            # fk.target_table is "schema.table" format from schema introspection
+            target_schema, target_table = self._parse_table_name(fk.target_table)
 
             target_key = (target_schema, target_table)
             if target_key in tables_with_remapped_ids:
@@ -527,12 +728,67 @@ class SQLGenerator:
             f"WHERE table_name='{target_table_full}' AND old_id='{old_id_str}')"
         )
 
+    def _build_on_conflict_clause(
+        self,
+        table_meta: Table,
+        insert_columns: list[str],
+        auto_gen_pks: list[str],
+    ) -> str:
+        """
+        Build ON CONFLICT clause for unique constraints.
+
+        Uses DO UPDATE with a no-op update to always get RETURNING values.
+        This makes the SQL idempotent - reusing existing records instead of failing.
+
+        Args:
+            table_meta: Table metadata with unique constraints
+            insert_columns: Columns being inserted
+            auto_gen_pks: Auto-generated PK columns (excluded from ON CONFLICT)
+
+        Returns:
+            ON CONFLICT clause string, or empty string if no unique constraints
+        """
+        unique_constraints = table_meta.unique_constraints
+
+        # Filter out unique constraints that only contain auto-generated PKs
+        # (those are already handled by the PK constraint)
+        non_pk_unique = {
+            name: cols
+            for name, cols in unique_constraints.items()
+            if not all(c in auto_gen_pks for c in cols)
+        }
+
+        if not non_pk_unique:
+            return ""
+
+        # Use the first unique constraint for ON CONFLICT
+        # (could be improved to choose best constraint, but any will work)
+        constraint_name, constraint_cols = next(iter(non_pk_unique.items()))
+
+        # Check if all constraint columns are in insert_columns
+        # (if not, we can't use this constraint for ON CONFLICT)
+        if not all(col in insert_columns for col in constraint_cols):
+            return ""
+
+        conflict_cols = ", ".join(f'"{col}"' for col in constraint_cols)
+
+        # Generate no-op UPDATE clause
+        # Pick the first column in the constraint for the update
+        update_col = constraint_cols[0]
+        on_conflict = (
+            f"ON CONFLICT ({conflict_cols}) "
+            f'DO UPDATE SET "{update_col}" = EXCLUDED."{update_col}"'
+        )
+
+        return on_conflict
+
     def _generate_insert_with_remapping(
         self, schema: str, table: str, records: list[RecordData]
     ) -> str:
-        """Generate INSERT with RETURNING and store ID mappings."""
+        """Generate INSERT with RETURNING and store ID mappings, with ON CONFLICT support."""
         # Get auto-generated PK columns
         auto_gen_pks = self._get_auto_generated_pk_columns(schema, table)
+        table_meta = self.introspector.get_table_metadata(schema, table)
 
         # Get all columns EXCEPT auto-generated PKs
         first_record = records[0]
@@ -542,12 +798,16 @@ class SQLGenerator:
         # Build column list
         columns_sql = ", ".join(f'"{col}"' for col in insert_columns)
 
+        # Get column type mapping for array/JSON distinction
+        column_type_map = self._get_column_types(schema, table)
+
         # Build VALUES rows
         values_rows = []
         old_pk_values = []
         for record in records:
             values = [
-                self._format_value(record.data.get(col)) for col in insert_columns
+                self._format_value(record.data.get(col), column_type_map.get(col))
+                for col in insert_columns
             ]
             values_sql = ", ".join(values)
             values_rows.append(f"        ({values_sql})")
@@ -560,15 +820,26 @@ class SQLGenerator:
         values_clause = ",\n".join(values_rows)
         full_table_name = f'"{schema}"."{table}"'
 
+        # Build ON CONFLICT clause for unique constraints
+        on_conflict = self._build_on_conflict_clause(
+            table_meta, insert_columns, auto_gen_pks
+        )
+
         if len(records) == 1:
             # Single insert: use RETURNING INTO scalar variable
             sql_lines = [
                 f"    INSERT INTO {full_table_name} ({columns_sql})",
                 "    VALUES",
                 f"{values_clause}",
-                f"    RETURNING {auto_gen_pks[0]} INTO v_new_id_{table};",
-                f"    INSERT INTO _snippy_id_map VALUES ('{full_table_name}', '{old_pk_values[0]}', v_new_id_{table}::TEXT);",
             ]
+            if on_conflict:
+                sql_lines.append(f"    {on_conflict}")
+            sql_lines.extend(
+                [
+                    f"    RETURNING {auto_gen_pks[0]} INTO v_new_id_{table};",
+                    f"    INSERT INTO _snippy_id_map VALUES ('{full_table_name}', '{old_pk_values[0]}', v_new_id_{table}::TEXT);",
+                ]
+            )
         else:
             # Bulk insert: use WITH + array aggregation + loop
             old_ids_array = ", ".join(f"'{val}'" for val in old_pk_values)
@@ -578,14 +849,20 @@ class SQLGenerator:
                 f"        INSERT INTO {full_table_name} ({columns_sql})",
                 "        VALUES",
                 f"{values_clause}",
-                f"        RETURNING {auto_gen_pks[0]}",
-                "    )",
-                f"    SELECT array_agg({auto_gen_pks[0]}) INTO v_new_ids_{table} FROM inserted;",
-                "    ",
-                f"    FOR i IN 1..array_length(v_new_ids_{table}, 1) LOOP",
-                f"        INSERT INTO _snippy_id_map VALUES ('{full_table_name}', v_old_ids_{table}[i], v_new_ids_{table}[i]::TEXT);",
-                "    END LOOP;",
             ]
+            if on_conflict:
+                sql_lines.append(f"        {on_conflict}")
+            sql_lines.extend(
+                [
+                    f"        RETURNING {auto_gen_pks[0]}",
+                    "    )",
+                    f"    SELECT array_agg({auto_gen_pks[0]}) INTO v_new_ids_{table} FROM inserted;",
+                    "    ",
+                    f"    FOR i IN 1..array_length(v_new_ids_{table}, 1) LOOP",
+                    f"        INSERT INTO _snippy_id_map VALUES ('{full_table_name}', v_old_ids_{table}[i], v_new_ids_{table}[i]::TEXT);",
+                    "    END LOOP;",
+                ]
+            )
 
         return "\n".join(sql_lines)
 
@@ -596,7 +873,25 @@ class SQLGenerator:
         records: list[RecordData],
         tables_with_remapped_ids: set[tuple[str, str]],
     ) -> str:
-        """Generate INSERT with FK values replaced by subqueries."""
+        """
+        Generate INSERT with FK remapping using JOIN-based approach.
+
+        Instead of subqueries per value, use a single INSERT-SELECT with JOINs.
+        Much more efficient for large datasets.
+
+        Example output:
+            INSERT INTO film_actor (actor_id, film_id, last_update)
+            SELECT
+                map0.new_id::integer,
+                map1.new_id::integer,
+                data.last_update
+            FROM (VALUES
+                ('20', '1', '2006-02-15T10:05:03'),
+                ...
+            ) AS data(old_actor_id, old_film_id, last_update)
+            JOIN _snippy_id_map map0 ...
+            JOIN _snippy_id_map map1 ...
+        """
         # Get FK columns that need remapping
         fk_to_remap = self._get_fk_columns_to_remap(
             schema, table, tables_with_remapped_ids
@@ -605,44 +900,126 @@ class SQLGenerator:
         # Build column list (all columns, including PKs)
         first_record = records[0]
         columns = sorted(first_record.data.keys())
-        columns_sql = ", ".join(f'"{col}"' for col in columns)
 
-        # Build VALUES rows
+        # Get column type mapping for array/JSON distinction
+        column_type_map = self._get_column_types(schema, table)
+
+        full_table_name = f'"{schema}"."{table}"'
+
+        # If no FKs to remap, use simple INSERT VALUES
+        if not fk_to_remap:
+            columns_sql = ", ".join(f'"{col}"' for col in columns)
+            values_rows = []
+            for record in records:
+                values = []
+                for col in columns:
+                    values.append(
+                        self._format_value(
+                            record.data.get(col), column_type_map.get(col)
+                        )
+                    )
+                values_sql = ", ".join(values)
+                values_rows.append(f"        ({values_sql})")
+            values_clause = ",\n".join(values_rows)
+            return "\n".join(
+                [
+                    f"    INSERT INTO {full_table_name} ({columns_sql})",
+                    "    VALUES",
+                    f"{values_clause};",
+                ]
+            )
+
+        # Build VALUES clause with old FK values as strings
         values_rows = []
         for record in records:
             values = []
             for col in columns:
+                value = record.data.get(col)
                 if col in fk_to_remap:
-                    # Replace FK value with subquery
-                    old_value = record.data.get(col)
-                    target_schema, target_table = fk_to_remap[col]
-                    target_full = f'"{target_schema}"."{target_table}"'
-
-                    # Get FK column data type for casting
-                    table_meta = self.introspector.get_table_metadata(schema, table)
-                    col_meta = next(
-                        (c for c in table_meta.columns if c.name == col), None
-                    )
-                    fk_data_type = col_meta.data_type if col_meta else "INTEGER"
-
-                    remapped_value = self._build_fk_remapping_value(
-                        old_value, target_full, fk_data_type
-                    )
-                    values.append(remapped_value)
+                    # For FK columns, use old ID as string
+                    if value is None:
+                        values.append("NULL")
+                    else:
+                        # Escape single quotes in the value
+                        escaped_value = str(value).replace("'", "''")
+                        values.append(f"'{escaped_value}'")
                 else:
-                    # Regular value
-                    values.append(self._format_value(record.data.get(col)))
-
+                    # For regular columns, format normally
+                    values.append(self._format_value(value, column_type_map.get(col)))
             values_sql = ", ".join(values)
             values_rows.append(f"        ({values_sql})")
 
         values_clause = ",\n".join(values_rows)
-        full_table_name = f'"{schema}"."{table}"'
+
+        # Create column aliases for the VALUES clause
+        # Example: data(old_actor_id, old_film_id, description, last_update)
+        data_column_aliases = []
+        for col in columns:
+            if col in fk_to_remap:
+                data_column_aliases.append(f"old_{col}")
+            else:
+                data_column_aliases.append(col)
+
+        # Get table metadata for column types
+        table_meta = self.introspector.get_table_metadata(schema, table)
+
+        # Build SELECT clause and JOIN clauses
+        select_parts = []
+        join_clauses = []
+        join_index = 0
+
+        for col in columns:
+            if col in fk_to_remap:
+                # FK column: select from mapping table
+                target_schema, target_table = fk_to_remap[col]
+                target_full = f'"{target_schema}"."{target_table}"'
+                alias = f"map{join_index}"
+
+                # Get column data type for casting
+                col_meta = next((c for c in table_meta.columns if c.name == col), None)
+                col_type = col_meta.data_type if col_meta else "INTEGER"
+
+                select_parts.append(f"{alias}.new_id::{col_type}")
+
+                # Add JOIN clause
+                join_clauses.append(
+                    f"    JOIN _snippy_id_map {alias}\n"
+                    f"        ON {alias}.table_name = '{target_full}'\n"
+                    f"        AND {alias}.old_id = data.old_{col}"
+                )
+                join_index += 1
+            else:
+                # Regular column: select from data with proper type casting
+                col_meta = next((c for c in table_meta.columns if c.name == col), None)
+                if col_meta:
+                    # Get the PostgreSQL type for casting
+                    # Map from information_schema data_type to PostgreSQL cast type
+                    pg_type = col_meta.data_type
+                    # For arrays, use udt_name which includes the [] suffix properly
+                    if pg_type.upper() == "ARRAY":
+                        # For arrays, we need to use the udt_name and convert to proper array type
+                        element_type = self._get_array_element_type(col_meta.udt_name)
+                        pg_type = f"{element_type}[]"
+                    select_parts.append(f"data.{col}::{pg_type}")
+                else:
+                    # Fallback if column metadata not found
+                    select_parts.append(f"data.{col}")
+
+        select_clause = ",\n        ".join(select_parts)
+        join_clause = "\n".join(join_clauses)
+
+        # Build final INSERT-SELECT statement
+        columns_sql = ", ".join(f'"{col}"' for col in columns)
+        data_aliases_sql = ", ".join(data_column_aliases)
 
         sql_lines = [
             f"    INSERT INTO {full_table_name} ({columns_sql})",
-            "    VALUES",
-            f"{values_clause};",
+            "    SELECT",
+            f"        {select_clause}",
+            "    FROM (VALUES",
+            f"{values_clause}",
+            f"    ) AS data({data_aliases_sql})",
+            f"{join_clause};",
         ]
 
         return "\n".join(sql_lines)

@@ -29,7 +29,7 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_NAME: test_db
+      DB_NAME: dvdrental
       DB_USER: test_user
       DB_SCHEMA: public
       LOG_LEVEL: ERROR

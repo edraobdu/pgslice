@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from ..utils.logging_config import get_logger
@@ -46,6 +47,64 @@ class SQLWriter:
         except OSError as e:
             logger.error(f"Failed to write to {output_path}: {e}")
             raise
+
+    @staticmethod
+    def generate_default_filename(
+        table_name: str, pk_value: str, schema: str = "public"
+    ) -> str:
+        """
+        Generate default filename with timestamp.
+
+        Format: {table}_{pk}_{timestamp}.sql
+        Example: users_42_20231223_143052.sql
+
+        Args:
+            table_name: Name of the table
+            pk_value: Primary key value (sanitized for filename)
+            schema: Schema name (default: public)
+
+        Returns:
+            Generated filename string
+        """
+        # Sanitize pk_value for filename (remove special chars)
+        safe_pk = str(pk_value).replace("/", "_").replace("\\", "_").replace(" ", "_")
+
+        # Generate timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        # Build filename
+        if schema and schema != "public":
+            filename = f"{schema}_{table_name}_{safe_pk}_{timestamp}.sql"
+        else:
+            filename = f"{table_name}_{safe_pk}_{timestamp}.sql"
+
+        return filename
+
+    @staticmethod
+    def get_default_output_path(
+        output_dir: Path, table_name: str, pk_value: str, schema: str = "public"
+    ) -> Path:
+        """
+        Get default output path with auto-generated filename.
+
+        Creates output directory if it doesn't exist.
+
+        Args:
+            output_dir: Base output directory
+            table_name: Name of the table
+            pk_value: Primary key value
+            schema: Schema name (default: public)
+
+        Returns:
+            Full path to output file
+        """
+        # Ensure directory exists
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate filename
+        filename = SQLWriter.generate_default_filename(table_name, pk_value, schema)
+
+        return output_dir / filename
 
     @staticmethod
     def write_to_stdout(sql_content: str) -> None:

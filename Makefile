@@ -97,8 +97,8 @@ down:  ## Stop Docker containers
 	$(DOCKER_COMPOSE) down
 
 
-run-repl:  ## Run interactive REPL (requires DATABASE_URL env var)
-	snippy --repl
+snippy:  ## Run interactive REPL (requires DATABASE_URL env var)
+	$(DOCKER_RUN) snippy
 
 # Local development with uv
 uv-install:  ## Install uv (one-time setup)

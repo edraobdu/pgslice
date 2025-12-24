@@ -50,6 +50,7 @@ class SchemaIntrospector:
             primary_keys = self._get_primary_keys(schema, table)
             fk_outgoing = self._get_foreign_keys_outgoing(schema, table)
             fk_incoming = self._get_foreign_keys_incoming(schema, table)
+            unique_constraints = self._get_unique_constraints(schema, table)
 
             # Mark PK columns and detect auto-generated columns
             pk_set = set(primary_keys)
@@ -57,6 +58,7 @@ class SchemaIntrospector:
                 Column(
                     name=col.name,
                     data_type=col.data_type,
+                    udt_name=col.udt_name,
                     nullable=col.nullable,
                     default=col.default,
                     is_primary_key=col.name in pk_set,
@@ -75,6 +77,7 @@ class SchemaIntrospector:
                 primary_keys=primary_keys,
                 foreign_keys_outgoing=fk_outgoing,
                 foreign_keys_incoming=fk_incoming,
+                unique_constraints=unique_constraints,
             )
 
         except psycopg.Error as e:
@@ -95,6 +98,7 @@ class SchemaIntrospector:
             SELECT
                 column_name,
                 data_type,
+                udt_name,
                 is_nullable,
                 column_default
             FROM information_schema.columns
@@ -111,11 +115,12 @@ class SchemaIntrospector:
 
         columns = []
         for row in rows:
-            column_name, data_type, is_nullable, column_default = row
+            column_name, data_type, udt_name, is_nullable, column_default = row
             columns.append(
                 Column(
                     name=column_name,
                     data_type=data_type,
+                    udt_name=udt_name,
                     nullable=is_nullable == "YES",
                     default=column_default,
                     is_primary_key=False,  # Will be set later
@@ -361,6 +366,48 @@ class SchemaIntrospector:
 
         logger.debug(f"Found {len(foreign_keys)} incoming FKs to {schema}.{table}")
         return foreign_keys
+
+    def _get_unique_constraints(self, schema: str, table: str) -> dict[str, list[str]]:
+        """
+        Get unique constraints for a table.
+
+        Args:
+            schema: Schema name
+            table: Table name
+
+        Returns:
+            Dict mapping constraint name to list of column names
+
+        Example:
+            {
+                "country_country_key": ["country"],
+                "language_name_key": ["name"]
+            }
+        """
+        query = """
+            SELECT
+                c.conname AS constraint_name,
+                array_agg(a.attname ORDER BY array_position(c.conkey, a.attnum)) AS columns
+            FROM pg_constraint c
+            JOIN pg_class cls ON cls.oid = c.conrelid
+            JOIN pg_namespace n ON n.oid = cls.relnamespace
+            JOIN pg_attribute a ON a.attrelid = c.conrelid
+                AND a.attnum = ANY(c.conkey)
+            WHERE c.contype = 'u'
+                AND n.nspname = %s
+                AND cls.relname = %s
+            GROUP BY c.conname
+        """
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, (schema, table))
+            rows = cur.fetchall()
+
+        constraints = {row[0]: row[1] for row in rows}
+        logger.debug(
+            f"Found {len(constraints)} unique constraint(s) in {schema}.{table}"
+        )
+        return constraints
 
     def get_all_tables(self, schema: str = "public") -> list[str]:
         """

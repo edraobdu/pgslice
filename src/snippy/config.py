@@ -43,9 +43,8 @@ class AppConfig:
     connection_ttl_minutes: int = 30
     max_depth: int | None = None
     log_level: str = "INFO"
-    require_read_only: bool = False
-    allow_write_connection: bool = False
     sql_batch_size: int = 100
+    output_dir: Path = Path.home() / ".snippy" / "dumps"
 
 
 def load_config() -> AppConfig:
@@ -96,8 +95,8 @@ def load_config() -> AppConfig:
         if (max_depth_str := os.getenv("MAX_DEPTH"))
         else None,
         log_level=os.getenv("LOG_LEVEL", "INFO"),
-        require_read_only=os.getenv("REQUIRE_READ_ONLY", "false").lower() == "true",
-        allow_write_connection=os.getenv("ALLOW_WRITE_CONNECTION", "false").lower()
-        == "true",
         sql_batch_size=int(os.getenv("SQL_BATCH_SIZE", "100")),
+        output_dir=Path(
+            os.getenv("SNIPPY_OUTPUT_DIR", str(Path.home() / ".snippy" / "dumps"))
+        ).expanduser(),
     )

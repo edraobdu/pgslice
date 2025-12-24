@@ -23,24 +23,20 @@ class ConnectionManager:
         config: DatabaseConfig,
         credentials: SecureCredentials,
         ttl_minutes: int = 30,
-        require_read_only: bool = False,
-        allow_write_connection: bool = False,
     ) -> None:
         """
         Initialize connection manager.
+
+        Always enforces read-only connections. Exits if read-only cannot be set.
 
         Args:
             config: Database configuration
             credentials: Secure credentials handler
             ttl_minutes: Connection time-to-live in minutes
-            require_read_only: Strictly require read-only connection
-            allow_write_connection: Allow writable connections without warning
         """
         self.config = config
         self.credentials = credentials
         self.ttl = timedelta(minutes=ttl_minutes)
-        self.require_read_only = require_read_only
-        self.allow_write_connection = allow_write_connection
         self._connection: psycopg.Connection[Any] | None = None
         self._last_used: datetime | None = None
         self._is_read_only: bool = False
@@ -92,30 +88,16 @@ class ConnectionManager:
             # Try to set read-only mode
             self._is_read_only = self._try_set_read_only()
 
-            # Handle read-only requirements
+            # Enforce read-only - exit if not available
             if not self._is_read_only:
-                if self.require_read_only:
-                    self._close_connection()
-                    raise ReadOnlyEnforcementError(
-                        "Read-only connection required but not available. "
-                        "Use --allow-write-connection to bypass this check."
-                    )
-                elif not self.allow_write_connection:
-                    # Warn user but continue
-                    logger.warning(
-                        "⚠️  WARNING: Could not establish read-only connection!"
-                    )
-                    logger.warning("⚠️  Database allows write operations.")
-                    logger.warning(
-                        "⚠️  This tool only performs SELECT queries, but proceed with caution."
-                    )
-                    response = input("Continue? [y/N]: ").strip().lower()
-                    if response not in ("y", "yes"):
-                        self._close_connection()
-                        raise DBConnectionError("User cancelled connection")
+                self._close_connection()
+                raise ReadOnlyEnforcementError(
+                    "Cannot establish read-only connection. "
+                    "Snippy requires read-only mode for safety. "
+                    "Please ensure your database user has appropriate permissions."
+                )
 
-            status = "READ-ONLY" if self._is_read_only else "READ-WRITE"
-            logger.info(f"Connection established ({status} mode)")
+            logger.info("Connection established (READ-ONLY mode)")
 
         except psycopg.Error as e:
             logger.error(f"Failed to connect to database: {e}")

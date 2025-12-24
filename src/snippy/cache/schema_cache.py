@@ -59,6 +59,7 @@ class SchemaCache:
                     table_id INTEGER NOT NULL,
                     column_name TEXT NOT NULL,
                     data_type TEXT NOT NULL,
+                    udt_name TEXT NOT NULL,
                     nullable INTEGER NOT NULL,
                     default_value TEXT,
                     is_primary_key INTEGER NOT NULL,
@@ -77,6 +78,14 @@ class SchemaCache:
                     FOREIGN KEY (target_table_id) REFERENCES tables(id) ON DELETE CASCADE
                 );
 
+                CREATE TABLE IF NOT EXISTS unique_constraints (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    table_id INTEGER NOT NULL,
+                    constraint_name TEXT NOT NULL,
+                    columns TEXT NOT NULL,
+                    FOREIGN KEY (table_id) REFERENCES tables(id) ON DELETE CASCADE
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_tables_lookup
                 ON tables(db_host, db_name, schema_name, table_name);
 
@@ -85,6 +94,9 @@ class SchemaCache:
 
                 CREATE INDEX IF NOT EXISTS idx_fk_target
                 ON foreign_keys(target_table_id);
+
+                CREATE INDEX IF NOT EXISTS idx_unique_constraints
+                ON unique_constraints(table_id);
             """)
 
         logger.debug("Cache database initialized")
@@ -159,7 +171,7 @@ class SchemaCache:
             # Get columns
             cur = conn.execute(
                 """
-                SELECT column_name, data_type, nullable, default_value, is_primary_key
+                SELECT column_name, data_type, udt_name, nullable, default_value, is_primary_key
                 FROM columns
                 WHERE table_id = ?
                 ORDER BY id
@@ -170,9 +182,10 @@ class SchemaCache:
                 Column(
                     name=row[0],
                     data_type=row[1],
-                    nullable=bool(row[2]),
-                    default=row[3],
-                    is_primary_key=bool(row[4]),
+                    udt_name=row[2],
+                    nullable=bool(row[3]),
+                    default=row[4],
+                    is_primary_key=bool(row[5]),
                 )
                 for row in cur.fetchall()
             ]
@@ -235,6 +248,17 @@ class SchemaCache:
                 for row in cur.fetchall()
             ]
 
+            # Get unique constraints
+            cur = conn.execute(
+                """
+                SELECT constraint_name, columns
+                FROM unique_constraints
+                WHERE table_id = ?
+                """,
+                (table_id,),
+            )
+            unique_constraints = {row[0]: json.loads(row[1]) for row in cur.fetchall()}
+
         logger.debug(f"Retrieved {schema}.{table} from cache")
         return Table(
             schema_name=schema,
@@ -243,6 +267,7 @@ class SchemaCache:
             primary_keys=primary_keys,
             foreign_keys_outgoing=fk_outgoing,
             foreign_keys_incoming=fk_incoming,
+            unique_constraints=unique_constraints,
         )
 
     def cache_table(self, db_host: str, db_name: str, table: Table) -> None:
@@ -289,24 +314,28 @@ class SchemaCache:
             )
             table_id = cur.fetchone()[0]
 
-            # Delete existing columns and FKs
+            # Delete existing columns, FKs, and unique constraints
             conn.execute("DELETE FROM columns WHERE table_id = ?", (table_id,))
             conn.execute(
                 "DELETE FROM foreign_keys WHERE source_table_id = ? OR target_table_id = ?",
                 (table_id, table_id),
+            )
+            conn.execute(
+                "DELETE FROM unique_constraints WHERE table_id = ?", (table_id,)
             )
 
             # Insert columns
             for col in table.columns:
                 conn.execute(
                     """
-                    INSERT INTO columns (table_id, column_name, data_type, nullable, default_value, is_primary_key)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT INTO columns (table_id, column_name, data_type, udt_name, nullable, default_value, is_primary_key)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         table_id,
                         col.name,
                         col.data_type,
+                        col.udt_name,
                         int(col.nullable),
                         col.default,
                         int(col.is_primary_key),
@@ -366,6 +395,16 @@ class SchemaCache:
                         fk.target_column,
                         fk.on_delete,
                     ),
+                )
+
+            # Insert unique constraints
+            for constraint_name, columns in table.unique_constraints.items():
+                conn.execute(
+                    """
+                    INSERT INTO unique_constraints (table_id, constraint_name, columns)
+                    VALUES (?, ?, ?)
+                    """,
+                    (table_id, constraint_name, json.dumps(columns)),
                 )
 
             conn.commit()

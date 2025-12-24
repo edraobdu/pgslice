@@ -74,18 +74,6 @@ Examples:
         help="Clear schema cache and exit",
     )
 
-    # Read-only enforcement arguments
-    parser.add_argument(
-        "--require-read-only",
-        action="store_true",
-        help="Strictly require read-only connection (exit if not available)",
-    )
-    parser.add_argument(
-        "--allow-write-connection",
-        action="store_true",
-        help="Allow writable connections without warning",
-    )
-
     # Other arguments
     parser.add_argument(
         "--log-level",
@@ -96,7 +84,7 @@ Examples:
     parser.add_argument(
         "--version",
         action="version",
-        version="snippy 0.1.0",
+        version="snippy 0.1.1",
     )
 
     args = parser.parse_args()
@@ -121,10 +109,6 @@ Examples:
             config.db.schema = args.schema
         if args.no_cache:
             config.cache.enabled = False
-        if args.require_read_only:
-            config.require_read_only = True
-        if args.allow_write_connection:
-            config.allow_write_connection = True
 
         config.log_level = args.log_level
 
@@ -156,8 +140,6 @@ Examples:
             config.db,
             credentials,
             ttl_minutes=config.connection_ttl_minutes,
-            require_read_only=config.require_read_only,
-            allow_write_connection=config.allow_write_connection,
         )
 
         # Test connection
