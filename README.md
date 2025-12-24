@@ -109,15 +109,19 @@ docker run --rm -it \
 Quick examples for testing during development:
 
 ```bash
-# Extract a single record with all dependencies
-snippy --host localhost --user postgres --database dvdrental
-# Then in REPL:
+# In REPL:
+# This will dump all related records to the film with id 1
+# The generated SQL file will be placed, by default, in ~/.snippy/dumps
+snippy> dump "film" 1
+
+# You can overwrite the output path with:
 snippy> dump "film" 1 --output film_1.sql
 
 # Extract multiple records
-snippy> dump "actor" 1,2,3 --output actors.sql
+snippy> dump "actor" 1,2,3 --output multiple_actors.sql
 
 # Use wide mode to follow all relationships (including self-referencing FKs)
+# Be cautions that this can result in larger datasets. So use with caution
 snippy> dump "customer" 42 --wide --output customer_42.sql
 
 # Apply timeframe filter
@@ -130,6 +134,10 @@ snippy> tables
 snippy> describe "film"
 
 # Keep original primary key values (no remapping)
+# By default, we will dinamically assign ids to the new generated records
+# and handle conflicts gracefully. Meaninh, you can run the same file multiple times
+# and no conflicts will arise.
+# If you want to keep the original id's run:
 snippy> dump "film" 1 --keep-pks --output film_1.sql
 ```
 
