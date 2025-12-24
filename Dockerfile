@@ -36,8 +36,16 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Create cache directory
-RUN mkdir -p /root/.cache/snippy
+# Create non-root user for proper file permissions
+RUN useradd -m -u 1000 snippy && \
+    mkdir -p /home/snippy/.cache/snippy /home/snippy/.snippy/dumps && \
+    chown -R snippy:snippy /app /home/snippy
+
+# Switch to non-root user
+USER snippy
+
+# Update cache directory to use snippy's home
+ENV SNIPPY_CACHE_DIR=/home/snippy/.cache/snippy
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []

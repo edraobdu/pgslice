@@ -1,24 +1,37 @@
 MAKEFLAGS += --no-print-directory --silent
 
-.PHONY: help install dev-install test coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-up docker-down docker-test all-checks test-fast coverage-minimal lint-fix lint-fix-all format-check docker-shell docker-logs docker-clean run-repl run-dump generate-test-data watch-test uv-install sync lock test-compat setup imports
+# Load .env file if it exists (makes variables available to make and subprocesses)
+-include .env
+export
+
+.PHONY: help install dev-install test coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-run docker-shell all-checks lint-fix lint-fix-all format-check uv-install sync lock test-compat setup imports run run-repl
 
 # Default target
 .DEFAULT_GOAL := help
 
-# Variables
-DOCKER_COMPOSE := docker compose
-DOCKER_RUN := $(DOCKER_COMPOSE) run --rm app
-
 # Project paths
 SRC_DIR := src/snippy
+DOCKER_IMAGE := snippy:latest
 
 help:  ## Show this help message
 	@echo "Available commands:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-shell:  ## Open shell in Docker container
-	$(DOCKER_RUN) /bin/bash
+# Local development commands
+run:  ## Run snippy (loads .env automatically)
+	@if [ ! -f .env ]; then \
+		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
+		exit 1; \
+	fi
+	uv run snippy
+
+run-repl:  ## Run snippy REPL (loads .env automatically)
+	@if [ ! -f .env ]; then \
+		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
+		exit 1; \
+	fi
+	uv run snippy --host $(DB_HOST) --port $(DB_PORT) --user $(DB_USER) --database $(DB_NAME)
 
 lint:  ## Run ruff linter
 	uv run ruff check $(SRC_DIR)
@@ -87,18 +100,32 @@ publish: all-checks build-dist  ## Publish to production PyPI (requires confirma
 	uv publish
 	@echo "Published! Install with: pip install snippy"
 
-build:  ## Build Docker images
-	$(DOCKER_COMPOSE) build
+# Docker commands
+docker-build:  ## Build Docker image
+	docker build -t $(DOCKER_IMAGE) .
 
-up:  ## Start Docker containers
-	$(DOCKER_COMPOSE) up -d
+docker-run:  ## Run snippy in Docker (loads .env automatically)
+	@if [ ! -f .env ]; then \
+		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
+		exit 1; \
+	fi
+	docker run --rm -it \
+		--user $$(id -u):$$(id -g) \
+		-v $(PWD)/dumps:/home/snippy/.snippy/dumps \
+		--env-file .env \
+		$(DOCKER_IMAGE) \
+		snippy
 
-down:  ## Stop Docker containers
-	$(DOCKER_COMPOSE) down
-
-
-snippy:  ## Run interactive REPL (requires DATABASE_URL env var)
-	$(DOCKER_RUN) snippy
+docker-shell:  ## Open shell in Docker container (with .env loaded)
+	@if [ ! -f .env ]; then \
+		echo "Warning: .env file not found. Some features may not work."; \
+	fi
+	docker run --rm -it \
+		--user $$(id -u):$$(id -g) \
+		-v $(PWD)/dumps:/home/snippy/.snippy/dumps \
+		--env-file .env \
+		$(DOCKER_IMAGE) \
+		bash
 
 # Local development with uv
 uv-install:  ## Install uv (one-time setup)

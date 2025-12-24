@@ -2,18 +2,18 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-Extract PostgreSQL records with all related data via foreign key relationships.
+Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
 ## Overview
 
-`snippy` is a Python CLI tool that extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. This is useful for:
+`snippy` extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. Perfect for:
 
 - Reproducing production bugs locally with real data
 - Creating partial database dumps for specific users/entities
 - Testing with realistic data subsets
 - Debugging issues that only occur with specific data states
 
-Instead of dumping an entire database (which may be huge), extract only what you need while maintaining referential integrity.
+Extract only what you need while maintaining referential integrity.
 
 ## Features
 
@@ -21,342 +21,211 @@ Instead of dumping an entire database (which may be huge), extract only what you
 - ✅ **Circular relationship handling**: Prevents infinite loops with visited tracking
 - ✅ **Multiple records**: Extract multiple records in one operation
 - ✅ **Timeframe filtering**: Filter specific tables by date ranges
-- ✅ **Read-only enforcement**: Prevents accidental writes to production databases
+- ✅ **PK remapping**: Auto-remaps auto-generated primary keys for clean imports
 - ✅ **Interactive REPL**: User-friendly command-line interface
 - ✅ **Schema caching**: SQLite-based caching for improved performance
 - ✅ **Type-safe**: Full type hints with mypy strict mode
 - ✅ **Secure**: SQL injection prevention, secure password handling
-- ✅ **Containerized**: Docker support, no local installation required
 
-## Quick Start (Docker - Recommended)
+## Development Setup
 
-**No local Python installation required!**
-
-```bash
-cd snippy
-
-# Start everything
-docker-compose up -d
-
-# Access the REPL
-docker-compose exec app snippy \
-  --host postgres \
-  --port 5432 \
-  --user test_user \
-  --database test_db \
-  --allow-write-connection
-
-# Try it out
-db> dump "users" 3 --output /app/output/user_3.sql
-db> tables
-db> describe "users"
-db> exit
-
-# Output file available at: ./output/user_3.sql
-```
-
-📖 **See [DOCKER_USAGE.md](DOCKER_USAGE.md) for complete Docker documentation.**
-
-## Installation (Local Development)
+> **Note:** This guide is for developers contributing to snippy. End-user installation instructions will be added when published to PyPI and Docker Hub.
 
 ### Prerequisites
-- Python 3.10+ (Python 3.14 recommended for development)
-- [uv](https://github.com/astral-sh/uv) - Fast Python package manager
 
-### Setup
+- Python 3.10+ (development uses 3.13/3.14)
+- PostgreSQL database for testing
+- Git
+
+### Local Development Setup
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd snippy
-
-# Install uv (one-time setup)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install Python 3.14 (optional, for latest features)
-uv python install 3.14
-
-# Create virtual environment and install dependencies
-# uv will automatically use Python 3.14 if available, or your system Python
-uv sync --dev
-
-# Activate virtual environment
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-# Verify installation
-snippy --version
+# One-time setup (installs uv, Python 3.14, dependencies, pre-commit hooks)
+make setup
 ```
 
-### Why uv?
-
-This project uses [uv](https://github.com/astral-sh/uv) for dependency management:
-- **10-100x faster** than pip for dependency resolution and installation
-- **Reproducible** builds via `uv.lock` (like cargo.lock or package-lock.json)
-- **Automatic** virtual environment management
-- **Python version management** built-in (install and switch between Python versions)
-- **Drop-in replacement** for pip commands
-
-### Python Version Compatibility
-
-**snippy supports Python 3.10+** for broad compatibility, but we recommend using **Python 3.14** for development to get the latest improvements:
-- **Python 3.10+**: Minimum requirement - library works on all these versions
-- **Python 3.14**: Recommended for development - latest performance and features
-
-The codebase uses modern Python syntax while maintaining backward compatibility with Python 3.10+.
-
-## Quick Start
-
-### Start the REPL
+#### Option A: Using .env file (Recommended)
 
 ```bash
-snippy --host localhost --port 5432 --user postgres --database mydb
+# Configure database connection
+cp .env.example .env
+# Edit .env with your database credentials
+
+# Run snippy (Makefile loads .env automatically)
+make run-repl
+
+# Or override specific variables
+make run-repl DB_NAME=other_database
 ```
 
-### Basic Usage
+#### Option B: Pass credentials directly to CLI
 
 ```bash
-# Dump a single user with all related data (strict mode - default)
-db> dump "users" 42 --output user_42.sql
+# Set password as environment variable (not stored)
+export PGPASSWORD=your_password
 
-# Dump multiple users
-db> dump "users" 42,123,456 --output users.sql
+# Run snippy with all parameters
+uv run snippy --host localhost --port 5432 --user postgres --database test_db
+```
 
-# Dump with wide mode (includes peers/siblings via self-referencing FKs)
-db> dump "users" 42 --wide --output user_42_wide.sql
+### Docker Development Setup
 
-# Dump with timeframe filtering
-db> dump "users" 42 --timeframe "transactions:2024-01-01:2024-12-31"
+For isolated testing without affecting your local environment:
+
+```bash
+# Build development image
+make docker-build
+```
+
+#### Option A: Using .env file (Recommended)
+
+```bash
+# Configure .env file first
+cp .env.example .env
+# Edit .env, set DB_HOST=host.docker.internal for Mac/Windows
+
+# Run snippy (Makefile loads .env automatically)
+# Generated files appear in ./dumps/
+make docker-run
+
+# Open shell in container for debugging
+make docker-shell
+```
+
+#### Option B: Pass credentials directly
+
+```bash
+# Run with manual parameters
+docker run --rm -it \
+  --user $(id -u):$(id -g) \
+  -v $(pwd)/dumps:/home/snippy/.snippy/dumps \
+  -e PGPASSWORD=your_password \
+  snippy:latest \
+  snippy --host host.docker.internal --port 5432 --user postgres --database test_db
+```
+
+## Usage Examples
+
+Quick examples for testing during development:
+
+```bash
+# Extract a single record with all dependencies
+snippy --host localhost --user postgres --database dvdrental
+# Then in REPL:
+db> dump "film" 1 --output film_1.sql
+
+# Extract multiple records
+db> dump "actor" 1,2,3 --output actors.sql
+
+# Use wide mode to follow all relationships (including self-referencing FKs)
+db> dump "customer" 42 --wide --output customer_42.sql
+
+# Apply timeframe filter
+db> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
 
 # List all tables
 db> tables
 
-# Describe table structure
-db> describe "users"
+# Show table structure and relationships
+db> describe "film"
 
-# Clear schema cache
-db> clear
-
-# Exit
-db> exit
+# Keep original primary key values (no remapping)
+db> dump "film" 1 --keep-pks --output film_1.sql
 ```
 
-## Example Scenario
-
-Given this database schema:
-
-```sql
-CREATE TABLE companies (id INT PRIMARY KEY, name TEXT);
-CREATE TABLE users (id INT PRIMARY KEY, name TEXT, company_id INT REFERENCES companies);
-CREATE TABLE orders (id INT PRIMARY KEY, user_id INT REFERENCES users);
-```
-
-Running `dump "users" 42` will extract:
-- The user record (id=42)
-- The company record (via `company_id` FK)
-- All order records (via reverse FK from `orders.user_id`)
-
-## Advanced Features
-
-### Strict vs Wide Mode
-
-**Strict Mode (Default)**:
-- Skips self-referencing foreign keys to prevent sibling/peer expansion
-- Example: Dumping a user only includes their managers, not their peers
-- Best for extracting specific records with their dependencies only
-
-**Wide Mode (`--wide` flag)**:
-- Follows all relationships including self-referencing FKs
-- Example: Dumping a user includes their peers who share the same manager
-- Best for exploratory dumps or when you need the full relationship graph
-
-```bash
-# Strict mode: Only user 42 and their dependencies
-db> dump "users" 42 --output user_strict.sql
-
-# Wide mode: User 42 plus all related users (peers, subordinates, etc.)
-db> dump "users" 42 --wide --output user_wide.sql
-```
-
-### Timeframe Filtering
-
-Extract only recent data:
-
-```bash
-db> dump "users" 42 --timeframe "orders:created_at:2024-01-01:2024-12-31"
-```
-
-This extracts:
-- User 42 (full record)
-- Only orders created in 2024
-- All related data (products, etc.)
-
-### Multiple Timeframes
-
-```bash
-db> dump "users" 42 \
-  --timeframe "orders:2024-01-01:2024-12-31" \
-  --timeframe "transactions:2024-06-01:2024-12-31"
-```
-
-### Read-Only Mode
-
-Enforce read-only connections:
-
-```bash
-snippy --host prod-db --require-read-only --database mydb
-```
-
-If read-only mode isn't available, the tool will refuse to connect.
-
-## Development
-
-### Local Development (without Docker)
-
-```bash
-# Install dependencies
-uv sync --dev
-
-# Run the CLI
-uv run snippy --host localhost --port 5432 --user postgres --database mydb
-
-# Or activate venv first
-source .venv/bin/activate
-snippy --help
-```
-
-### Code Quality
-
-```bash
-# Type checking (checks against Python 3.10 compatibility)
-uv run mypy src/snippy
-
-# Linting
-uv run ruff check src/
-
-# Auto-fix linting issues
-uv run ruff check --fix src/
-
-# Formatting
-uv run ruff format src/
-
-# Check formatting without changes
-uv run ruff format --check src/
-```
-
-### Testing Python Version Compatibility
-
-```bash
-# Test with Python 3.10 (minimum supported version)
-uv run --python 3.10 snippy --version
-
-# Test with Python 3.14 (development version)
-uv run --python 3.14 snippy --version
-
-# Install specific Python version if needed
-uv python install 3.10
-uv python install 3.14
-```
-
-### Docker Development
-
-```bash
-# Build with Python 3.13
-make build
-make up
-
-# Run commands in Docker
-make type-check
-make lint
-make format
-
-# Open shell in container
-make shell
-```
-
-### Updating Dependencies
-
-```bash
-# Add a new dependency
-uv add <package-name>
-
-# Add a dev dependency
-uv add --dev <package-name>
-
-# Update all dependencies
-uv lock --upgrade
-
-# Sync after changes
-uv sync --dev
-
-# Update Python version
-uv python install 3.14
-```
+For more examples and detailed usage, see [CLAUDE.md](CLAUDE.md).
 
 ## Configuration
 
-Configuration can be provided via environment variables or a `.env` file:
+Key environment variables (see `.env.example` for full reference):
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DB_HOST` | Database host | `localhost` |
+| `DB_PORT` | Database port | `5432` |
+| `DB_NAME` | Database name | - |
+| `DB_USER` | Database user | - |
+| `DB_SCHEMA` | Schema to use | `public` |
+| `PGPASSWORD` | Database password (env var only) | - |
+| `CACHE_ENABLED` | Enable schema caching | `true` |
+| `CACHE_TTL_HOURS` | Cache time-to-live | `24` |
+| `LOG_LEVEL` | Logging level | `INFO` |
+| `SNIPPY_OUTPUT_DIR` | Output directory | `~/.snippy/dumps` |
+
+## Development Workflow
+
+### Running Code Quality Checks
 
 ```bash
-# Database
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=my_database
-DB_USER=postgres
-DB_SCHEMA=public
-
-# Cache
-CACHE_ENABLED=true
-CACHE_TTL_HOURS=24
-
-# Connection
-CONNECTION_TTL_MINUTES=30
-
-# Logging
-LOG_LEVEL=INFO
+make all-checks      # Run all quality checks (lint, format, type-check)
+make lint            # Check code style with ruff
+make lint-fix        # Auto-fix safe linting issues
+make lint-fix-all    # Auto-fix all linting issues (including unsafe)
+make format          # Format code with ruff
+make format-check    # Check formatting without changes
+make type-check      # Run mypy type checking
+make imports         # Sort and organize imports
 ```
 
-## Architecture
+### Building & Publishing
 
-- **graph/models.py**: Data models (Table, ForeignKey, RecordData)
-- **db/schema.py**: PostgreSQL schema introspection
-- **graph/traverser.py**: Bidirectional BFS relationship traversal
-- **dumper/sql_generator.py**: SQL INSERT statement generation
-- **dumper/dependency_sorter.py**: Topological sort for FK ordering
-- **cache/schema_cache.py**: SQLite-based schema caching
-- **repl.py**: Interactive terminal interface
-- **cli.py**: CLI argument parsing and entry point
+```bash
+make build-dist      # Build distribution packages
+make install-local   # Install locally for testing
+make publish-test    # Publish to TestPyPI
+make publish         # Publish to production PyPI (requires confirmation)
+```
 
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for detailed architecture.
+### Available Make Commands
+
+Run `make help` to see all available commands.
+
+### Detailed Development Guide
+
+For comprehensive development documentation including:
+- Code quality standards and mypy configuration
+- Type checking and Python 3.10+ compatibility
+- Module organization and architecture
+- Common patterns and adding new features
+- FK remapping implementation details
 
 ## Security
 
 - ✅ **Parameterized queries**: All SQL uses proper parameterization
 - ✅ **SQL injection prevention**: Identifier validation
-- ✅ **Secure passwords**: Never logged, prompted at runtime
-- ✅ **Read-only by default**: Attempts read-only connections first
-- ✅ **OWASP compliant**: Follows security best practices
+- ✅ **Secure passwords**: Never logged or stored
+- ✅ **Read-only enforcement**: Safe for production databases
 
-## License
+## Troubleshooting
 
-MIT
+### Common Issues
+
+1. **Permission denied on output files (Docker)**
+   - Make sure you're using `--user $(id -u):$(id -g)` with docker run
+   - The Makefile commands handle this automatically
+
+2. **Cannot connect to database from Docker**
+   - Mac/Windows: Use `host.docker.internal` as DB_HOST
+   - Linux: Use `host.docker.internal` or `--network host`
+
+3. **Schema cache issues**
+   - Clear cache: `snippy --no-cache`
+   - Or delete cache directory: `rm -rf ~/.cache/snippy`
+
+4. **Import errors after installation**
+   - Ensure virtual environment is activated: `source .venv/bin/activate`
+   - Or use `uv run snippy` which handles venv automatically
 
 ## Contributing
 
 Contributions welcome! Please ensure:
-- All tests pass (`pytest`)
-- Type checking passes (`mypy src/`)
-- Code is formatted (`ruff format`)
-- Coverage stays above 90%
+- Code passes all checks: `make all-checks`
+- Type checking passes (mypy strict mode)
+- Code is formatted with ruff
+- Pre-commit hooks are installed: `uv run pre-commit install`
 
-## Roadmap
+See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
 
-- [ ] Support for composite foreign keys
-- [ ] Progress indicators for large dumps
-- [ ] Export to other formats (JSON, CSV)
-- [ ] Support for other databases (MySQL, SQLite)
-- [ ] Web UI for visualization
-- [ ] Incremental dumps (only changed data)
+## License
 
-## Credits
-
-Created to solve the common problem of debugging production issues without dumping entire databases.
+MIT
