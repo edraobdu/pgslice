@@ -133,8 +133,6 @@ snippy> describe "film"
 snippy> dump "film" 1 --keep-pks --output film_1.sql
 ```
 
-For more examples and detailed usage, see [CLAUDE.md](CLAUDE.md).
-
 ## Configuration
 
 Key environment variables (see `.env.example` for full reference):
@@ -223,8 +221,6 @@ Contributions welcome! Please ensure:
 - Type checking passes (mypy strict mode)
 - Code is formatted with ruff
 - Pre-commit hooks are installed: `uv run pre-commit install`
-
-See [CLAUDE.md](CLAUDE.md) for detailed development guidelines.
 
 ## License
 
