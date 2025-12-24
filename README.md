@@ -112,25 +112,25 @@ Quick examples for testing during development:
 # Extract a single record with all dependencies
 snippy --host localhost --user postgres --database dvdrental
 # Then in REPL:
-db> dump "film" 1 --output film_1.sql
+snippy> dump "film" 1 --output film_1.sql
 
 # Extract multiple records
-db> dump "actor" 1,2,3 --output actors.sql
+snippy> dump "actor" 1,2,3 --output actors.sql
 
 # Use wide mode to follow all relationships (including self-referencing FKs)
-db> dump "customer" 42 --wide --output customer_42.sql
+snippy> dump "customer" 42 --wide --output customer_42.sql
 
 # Apply timeframe filter
-db> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
+snippy> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
 
 # List all tables
-db> tables
+snippy> tables
 
 # Show table structure and relationships
-db> describe "film"
+snippy> describe "film"
 
 # Keep original primary key values (no remapping)
-db> dump "film" 1 --keep-pks --output film_1.sql
+snippy> dump "film" 1 --keep-pks --output film_1.sql
 ```
 
 For more examples and detailed usage, see [CLAUDE.md](CLAUDE.md).
