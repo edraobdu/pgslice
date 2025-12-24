@@ -45,15 +45,13 @@ Extract only what you need while maintaining referential integrity.
 ### Local Development Setup
 
 ```bash
-# One-time setup (installs uv, Python 3.14, dependencies, pre-commit hooks)
+# One-time setup (installs uv, Python 3.14, dependencies, pre-commit hooks, copies env file)
 make setup
 ```
 
 #### Option A: Using .env file (Recommended)
 
 ```bash
-# Configure database connection
-cp .env.example .env
 # Edit .env with your database credentials
 
 # Run pgslice (Makefile loads .env automatically)
@@ -85,8 +83,6 @@ make docker-build
 #### Option A: Using .env file (Recommended)
 
 ```bash
-# Configure .env file first
-cp .env.example .env
 # Edit .env, set DB_HOST=host.docker.internal for Mac/Windows
 
 # Run pgslice (Makefile loads .env automatically)
@@ -117,6 +113,7 @@ Quick examples for testing during development:
 # In REPL:
 # This will dump all related records to the film with id 1
 # The generated SQL file will be placed, by default, in ~/.pgslice/dumps
+# The name will be a formated string with table name, id, and timestamp
 pgslice> dump "film" 1
 
 # You can overwrite the output path with:
