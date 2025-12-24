@@ -1,12 +1,17 @@
-# snippy
+<p align="center">
+  <img src="assets/logo.png" alt="PgSlice Logo" width="300">
+</p>
 
+# pgslice
+
+[![PyPI version](https://img.shields.io/pypi/v/pgslice.svg)](https://pypi.org/project/pgslice/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
 Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
 ## Overview
 
-`snippy` extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. Perfect for:
+`pgslice` extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. Perfect for:
 
 - Reproducing production bugs locally with real data
 - Creating partial database dumps for specific users/entities
@@ -29,7 +34,7 @@ Extract only what you need while maintaining referential integrity.
 
 ## Development Setup
 
-> **Note:** This guide is for developers contributing to snippy. End-user installation instructions will be added when published to PyPI and Docker Hub.
+> **Note:** This guide is for developers contributing to pgslice. End-user installation instructions will be added when published to PyPI and Docker Hub.
 
 ### Prerequisites
 
@@ -51,7 +56,7 @@ make setup
 cp .env.example .env
 # Edit .env with your database credentials
 
-# Run snippy (Makefile loads .env automatically)
+# Run pgslice (Makefile loads .env automatically)
 make run-repl
 
 # Or override specific variables
@@ -64,8 +69,8 @@ make run-repl DB_NAME=other_database
 # Set password as environment variable (not stored)
 export PGPASSWORD=your_password
 
-# Run snippy with all parameters
-uv run snippy --host localhost --port 5432 --user postgres --database test_db
+# Run pgslice with all parameters
+uv run pgslice --host localhost --port 5432 --user postgres --database test_db
 ```
 
 ### Docker Development Setup
@@ -84,7 +89,7 @@ make docker-build
 cp .env.example .env
 # Edit .env, set DB_HOST=host.docker.internal for Mac/Windows
 
-# Run snippy (Makefile loads .env automatically)
+# Run pgslice (Makefile loads .env automatically)
 # Generated files appear in ./dumps/
 make docker-run
 
@@ -98,10 +103,10 @@ make docker-shell
 # Run with manual parameters
 docker run --rm -it \
   --user $(id -u):$(id -g) \
-  -v $(pwd)/dumps:/home/snippy/.snippy/dumps \
+  -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
   -e PGPASSWORD=your_password \
-  snippy:latest \
-  snippy --host host.docker.internal --port 5432 --user postgres --database test_db
+  pgslice:latest \
+  pgslice --host host.docker.internal --port 5432 --user postgres --database test_db
 ```
 
 ## Usage Examples
@@ -111,34 +116,34 @@ Quick examples for testing during development:
 ```bash
 # In REPL:
 # This will dump all related records to the film with id 1
-# The generated SQL file will be placed, by default, in ~/.snippy/dumps
-snippy> dump "film" 1
+# The generated SQL file will be placed, by default, in ~/.pgslice/dumps
+pgslice> dump "film" 1
 
 # You can overwrite the output path with:
-snippy> dump "film" 1 --output film_1.sql
+pgslice> dump "film" 1 --output film_1.sql
 
 # Extract multiple records
-snippy> dump "actor" 1,2,3 --output multiple_actors.sql
+pgslice> dump "actor" 1,2,3 --output multiple_actors.sql
 
 # Use wide mode to follow all relationships (including self-referencing FKs)
 # Be cautions that this can result in larger datasets. So use with caution
-snippy> dump "customer" 42 --wide --output customer_42.sql
+pgslice> dump "customer" 42 --wide --output customer_42.sql
 
 # Apply timeframe filter
-snippy> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
+pgslice> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
 
 # List all tables
-snippy> tables
+pgslice> tables
 
 # Show table structure and relationships
-snippy> describe "film"
+pgslice> describe "film"
 
 # Keep original primary key values (no remapping)
 # By default, we will dinamically assign ids to the new generated records
 # and handle conflicts gracefully. Meaninh, you can run the same file multiple times
 # and no conflicts will arise.
 # If you want to keep the original id's run:
-snippy> dump "film" 1 --keep-pks --output film_1.sql
+pgslice> dump "film" 1 --keep-pks --output film_1.sql
 ```
 
 ## Configuration
@@ -156,7 +161,7 @@ Key environment variables (see `.env.example` for full reference):
 | `CACHE_ENABLED` | Enable schema caching | `true` |
 | `CACHE_TTL_HOURS` | Cache time-to-live | `24` |
 | `LOG_LEVEL` | Logging level | `INFO` |
-| `SNIPPY_OUTPUT_DIR` | Output directory | `~/.snippy/dumps` |
+| `PGSLICE_OUTPUT_DIR` | Output directory | `~/.pgslice/dumps` |
 
 ## Development Workflow
 
@@ -215,12 +220,12 @@ For comprehensive development documentation including:
    - Linux: Use `host.docker.internal` or `--network host`
 
 3. **Schema cache issues**
-   - Clear cache: `snippy --no-cache`
-   - Or delete cache directory: `rm -rf ~/.cache/snippy`
+   - Clear cache: `pgslice --no-cache`
+   - Or delete cache directory: `rm -rf ~/.cache/pgslice`
 
 4. **Import errors after installation**
    - Ensure virtual environment is activated: `source .venv/bin/activate`
-   - Or use `uv run snippy` which handles venv automatically
+   - Or use `uv run pgslice` which handles venv automatically
 
 ## Contributing
 

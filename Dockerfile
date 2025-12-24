@@ -37,18 +37,18 @@ ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
 
 # Create non-root user for proper file permissions
-RUN useradd -m -u 1000 snippy && \
-    mkdir -p /home/snippy/.cache/snippy /home/snippy/.snippy/dumps && \
-    chown -R snippy:snippy /app /home/snippy
+RUN useradd -m -u 1000 pgslice && \
+    mkdir -p /home/pgslice/.cache/pgslice /home/pgslice/.pgslice/dumps && \
+    chown -R pgslice:pgslice /app /home/pgslice
 
 # Switch to non-root user
-USER snippy
+USER pgslice
 
-# Update cache directory to use snippy's home
-ENV SNIPPY_CACHE_DIR=/home/snippy/.cache/snippy
+# Update cache directory to use pgslice's home
+ENV PGSLICE_CACHE_DIR=/home/pgslice/.cache/pgslice
 
 # Reset the entrypoint, don't invoke `uv`
 ENTRYPOINT []
 
 # Default command
-CMD ["snippy", "--help"]
+CMD ["pgslice", "--help"]

@@ -1,4 +1,4 @@
-"""Logging configuration for snippy."""
+"""Logging configuration for pgslice."""
 
 import logging
 import sys

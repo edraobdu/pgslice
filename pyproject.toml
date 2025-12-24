@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "snippy"
+name = "pgslice"
 version = "0.1.1"
 description = "Extract PostgreSQL records with all related data via FK relationships"
 readme = "README.md"
@@ -46,7 +46,7 @@ dev = [
 ]
 
 [project.scripts]
-snippy = "snippy.cli:main"
+pgslice = "pgslice.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -73,12 +73,7 @@ select = [
 
 # Black-compatible settings: Ignore line-too-long for strings
 # This is standard practice for SQL queries and log messages
-ignore = ["E501"]
-
-# Allow print statements in REPL and CLI - these are user-facing output files
-[tool.ruff.lint.per-file-ignores]
-"src/snippy/repl.py" = ["T201"]  # Allow print() in REPL
-"src/snippy/cli.py" = ["T201"]   # Allow print() in CLI
+ignore = ["E501", "T201"]
 
 
 [tool.mypy]
@@ -113,10 +108,10 @@ ignore_missing_imports = true
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --cov=src/snippy --cov-report=html --cov-report=term"
+addopts = "-v --cov=src/pgslice --cov-report=html --cov-report=term"
 
 [tool.coverage.run]
-source = ["src/snippy"]
+source = ["src/pgslice"]
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]

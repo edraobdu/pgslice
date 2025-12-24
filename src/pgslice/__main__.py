@@ -1,4 +1,4 @@
-"""Entry point for running as a module: python -m snippy"""
+"""Entry point for running as a module: python -m pgslice"""
 
 import sys
 

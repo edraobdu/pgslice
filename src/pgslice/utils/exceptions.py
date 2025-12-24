@@ -1,8 +1,8 @@
-"""Custom exceptions for snippy."""
+"""Custom exceptions for pgslice."""
 
 
 class DBReverseDumpError(Exception):
-    """Base exception for snippy."""
+    """Base exception for pgslice."""
 
     pass
 

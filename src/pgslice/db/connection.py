@@ -93,7 +93,7 @@ class ConnectionManager:
                 self._close_connection()
                 raise ReadOnlyEnforcementError(
                     "Cannot establish read-only connection. "
-                    "Snippy requires read-only mode for safety. "
+                    "Pgslice requires read-only mode for safety. "
                     "Please ensure your database user has appropriate permissions."
                 )
 

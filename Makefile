@@ -4,34 +4,34 @@ MAKEFLAGS += --no-print-directory --silent
 -include .env
 export
 
-.PHONY: help install dev-install test coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-run docker-shell all-checks lint-fix lint-fix-all format-check uv-install sync lock test-compat setup imports run run-repl
+.PHONY: help install dev-install test coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-run docker-shell all-checks lint-fix lint-fix-all format-check uv-install sync lock test-compat setup imports run run-repl show-version bump-patch bump-minor bump-major
 
 # Default target
 .DEFAULT_GOAL := help
 
 # Project paths
-SRC_DIR := src/snippy
-DOCKER_IMAGE := snippy:latest
+SRC_DIR := src/pgslice
+DOCKER_IMAGE := pgslice:latest
 
 help:  ## Show this help message
 	@echo "Available commands:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # Local development commands
-run:  ## Run snippy (loads .env automatically)
+run:  ## Run pgslice (loads .env automatically)
 	@if [ ! -f .env ]; then \
 		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
 		exit 1; \
 	fi
-	uv run snippy
+	uv run pgslice
 
-run-repl:  ## Run snippy REPL (loads .env automatically)
+run-repl:  ## Run pgslice REPL (loads .env automatically)
 	@if [ ! -f .env ]; then \
 		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
 		exit 1; \
 	fi
-	uv run snippy --host $(DB_HOST) --port $(DB_PORT) --user $(DB_USER) --database $(DB_NAME)
+	uv run pgslice --host $(DB_HOST) --port $(DB_PORT) --user $(DB_USER) --database $(DB_NAME)
 
 lint:  ## Run ruff linter
 	uv run ruff check $(SRC_DIR)
@@ -74,6 +74,22 @@ clean:  ## Remove build artifacts and cache
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name "*.pyc" -delete
 
+# Version management
+show-version:  ## Show current version from pyproject.toml
+	@grep '^version = ' pyproject.toml | cut -d'"' -f2
+
+bump-patch:  ## Bump patch version (0.1.1 -> 0.1.2)
+	@uv run python scripts/bump_version.py patch
+	@echo "Version bumped to $$($(MAKE) show-version)"
+
+bump-minor:  ## Bump minor version (0.1.1 -> 0.2.0)
+	@uv run python scripts/bump_version.py minor
+	@echo "Version bumped to $$($(MAKE) show-version)"
+
+bump-major:  ## Bump major version (0.1.1 -> 1.0.0)
+	@uv run python scripts/bump_version.py major
+	@echo "Version bumped to $$($(MAKE) show-version)"
+
 # Python package building and publishing
 build-dist: clean  ## Build Python distribution packages (wheel + sdist)
 	@echo "Building distribution packages..."
@@ -84,13 +100,13 @@ build-dist: clean  ## Build Python distribution packages (wheel + sdist)
 install-local: build-dist  ## Install package locally from built wheel
 	@echo "Installing from local build..."
 	uv pip install dist/*.whl --force-reinstall
-	@echo "Installation complete! Test with: snippy --version"
+	@echo "Installation complete! Test with: pgslice --version"
 
 publish-test: build-dist  ## Publish to TestPyPI for testing
 	@echo "Publishing to TestPyPI..."
 	uv publish --publish-url https://test.pypi.org/legacy/
 	@echo "Published to TestPyPI! Install with:"
-	@echo "  pip install --index-url https://test.pypi.org/simple/ snippy"
+	@echo "  pip install --index-url https://test.pypi.org/simple/ pgslice"
 
 publish: all-checks build-dist  ## Publish to production PyPI (requires confirmation)
 	@echo "WARNING: This will publish to production PyPI!"
@@ -98,23 +114,23 @@ publish: all-checks build-dist  ## Publish to production PyPI (requires confirma
 	[ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ] || (echo "Aborted." && exit 1)
 	@echo "Publishing to PyPI..."
 	uv publish
-	@echo "Published! Install with: pip install snippy"
+	@echo "Published! Install with: pip install pgslice"
 
 # Docker commands
 docker-build:  ## Build Docker image
 	docker build -t $(DOCKER_IMAGE) .
 
-docker-run:  ## Run snippy in Docker (loads .env automatically)
+docker-run:  ## Run pgslice in Docker (loads .env automatically)
 	@if [ ! -f .env ]; then \
 		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
 		exit 1; \
 	fi
 	docker run --rm -it \
 		--user $$(id -u):$$(id -g) \
-		-v $(PWD)/dumps:/home/snippy/.snippy/dumps \
+		-v $(PWD)/dumps:/home/pgslice/.pgslice/dumps \
 		--env-file .env \
 		$(DOCKER_IMAGE) \
-		snippy
+		pgslice
 
 docker-shell:  ## Open shell in Docker container (with .env loaded)
 	@if [ ! -f .env ]; then \
@@ -122,7 +138,7 @@ docker-shell:  ## Open shell in Docker container (with .env loaded)
 	fi
 	docker run --rm -it \
 		--user $$(id -u):$$(id -g) \
-		-v $(PWD)/dumps:/home/snippy/.snippy/dumps \
+		-v $(PWD)/dumps:/home/pgslice/.pgslice/dumps \
 		--env-file .env \
 		$(DOCKER_IMAGE) \
 		bash

@@ -1,4 +1,4 @@
-"""Configuration management for snippy."""
+"""Configuration management for pgslice."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ class AppConfig:
     max_depth: int | None = None
     log_level: str = "INFO"
     sql_batch_size: int = 100
-    output_dir: Path = Path.home() / ".snippy" / "dumps"
+    output_dir: Path = Path.home() / ".pgslice" / "dumps"
 
 
 def load_config() -> AppConfig:
@@ -62,7 +62,7 @@ def load_config() -> AppConfig:
         DB_SCHEMA: Database schema (default: public)
         CACHE_ENABLED: Enable caching (default: true)
         CACHE_TTL_HOURS: Cache TTL in hours (default: 24)
-        SNIPPY_CACHE_DIR: Cache directory
+        PGSLICE_CACHE_DIR: Cache directory
         CONNECTION_TTL_MINUTES: Connection TTL in minutes (default: 30)
         MAX_DEPTH: Maximum traversal depth (optional)
         LOG_LEVEL: Log level (default: INFO)
@@ -72,8 +72,8 @@ def load_config() -> AppConfig:
 
     # Determine cache directory
     cache_dir_str = os.getenv(
-        "SNIPPY_CACHE_DIR",
-        str(Path.home() / ".cache" / "snippy"),
+        "PGSLICE_CACHE_DIR",
+        str(Path.home() / ".cache" / "pgslice"),
     )
     cache_dir = Path(cache_dir_str).expanduser()
 
@@ -97,6 +97,6 @@ def load_config() -> AppConfig:
         log_level=os.getenv("LOG_LEVEL", "INFO"),
         sql_batch_size=int(os.getenv("SQL_BATCH_SIZE", "100")),
         output_dir=Path(
-            os.getenv("SNIPPY_OUTPUT_DIR", str(Path.home() / ".snippy" / "dumps"))
+            os.getenv("PGSLICE_OUTPUT_DIR", str(Path.home() / ".pgslice" / "dumps"))
         ).expanduser(),
     )

@@ -142,9 +142,11 @@ Thumbs.db
 # Project specific
 *.sql.dump
 *_dump.sql
-.snippy_history
+.pgslice_history
 schema_cache.db
 output/
 
 # AI
 CLAUDE.md
+.claude/
+.cursor/

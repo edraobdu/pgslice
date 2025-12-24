@@ -65,19 +65,19 @@ class REPL:
     def start(self) -> None:
         """Start the REPL."""
         # Create prompt session with history
-        history_file = Path.home() / ".snippy_history"
+        history_file = Path.home() / ".pgslice_history"
         self.session = PromptSession(
             history=FileHistory(str(history_file)),
             completer=WordCompleter(list(self.commands.keys()), ignore_case=True),
         )
 
-        printy("\n[cB]snippy REPL@")
+        printy("\n[cB]pgslice REPL@")
         printy("Type 'help' for commands, 'exit' to quit\n")
 
         while True:
             try:
                 # Get user input
-                user_input = self.session.prompt("snippy> ")
+                user_input = self.session.prompt("pgslice> ")
 
                 if not user_input.strip():
                     continue

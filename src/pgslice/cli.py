@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib.metadata import version as get_version
 
 from .config import load_config
 from .db.connection import ConnectionManager
@@ -17,7 +18,7 @@ logger = get_logger(__name__)
 
 def main() -> int:
     """
-    Main entry point for snippy CLI.
+    Main entry point for pgslice CLI.
 
     Returns:
         Exit code (0 for success, non-zero for error)
@@ -81,10 +82,17 @@ Examples:
         default="INFO",
         help="Log level (default: INFO)",
     )
+    # Get version dynamically from package metadata
+    try:
+        pkg_version = get_version("pgslice")
+    except Exception:
+        # Fallback for development or if package not installed
+        pkg_version = "development"
+
     parser.add_argument(
         "--version",
         action="version",
-        version="snippy 0.1.1",
+        version=f"pgslice {pkg_version}",
     )
 
     args = parser.parse_args()

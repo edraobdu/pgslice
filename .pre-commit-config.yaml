@@ -6,7 +6,7 @@ repos:
         entry: uv run ruff check --fix
         language: system
         types: [python]
-        files: ^src/snippy/
+        files: ^src/pgslice/
         pass_filenames: false
 
       - id: ruff-format
@@ -14,13 +14,13 @@ repos:
         entry: uv run ruff format
         language: system
         types: [python]
-        files: ^src/snippy/
+        files: ^src/pgslice/
         pass_filenames: false
 
       - id: mypy
         name: mypy type check
-        entry: uv run mypy src/snippy
+        entry: uv run mypy src/pgslice
         language: system
         types: [python]
-        files: ^src/snippy/
+        files: ^src/pgslice/
         pass_filenames: false
