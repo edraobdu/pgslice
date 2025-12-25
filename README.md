@@ -33,82 +33,40 @@ Extract only what you need while maintaining referential integrity.
 - ✅ **Type-safe**: Full type hints with mypy strict mode
 - ✅ **Secure**: SQL injection prevention, secure password handling
 
-## Development Setup
+## Installation
 
-> **Note:** This guide is for developers contributing to pgslice. End-user installation instructions will be added when published to PyPI and Docker Hub.
-
-### Prerequisites
-
-- Python 3.10+ (development uses 3.13/3.14)
-- PostgreSQL database for testing
-- Git
-
-### Local Development Setup
+### From PyPI (Recommended)
 
 ```bash
-# One-time setup (installs uv, Python 3.14, dependencies, pre-commit hooks, copies env file)
-make setup
+# Install with pipx (isolated environment, recommended)
+pipx install pgslice
+
+# Or with pip
+pip install pgslice
+
+# Or with uv
+uv tool install pgslice
 ```
 
-#### Option A: Using .env file (Recommended)
+### From Docker Hub
 
 ```bash
-# Edit .env with your database credentials
+# Pull the image
+docker pull <your-dockerhub-username>/pgslice:latest
 
-# Run pgslice (Makefile loads .env automatically)
-make run-repl
-
-# Or override specific variables
-make run-repl DB_NAME=other_database
-```
-
-#### Option B: Pass credentials directly to CLI
-
-```bash
-# Set password as environment variable (not stored)
-export PGPASSWORD=your_password
-
-# Run pgslice with all parameters
-uv run pgslice --host localhost --port 5432 --user postgres --database test_db
-```
-
-### Docker Development Setup
-
-For isolated testing without affecting your local environment:
-
-```bash
-# Build development image
-make docker-build
-```
-
-#### Option A: Using .env file (Recommended)
-
-```bash
-# Edit .env, set DB_HOST=host.docker.internal for Mac/Windows
-
-# Run pgslice (Makefile loads .env automatically)
-# Generated files appear in ./dumps/
-make docker-run
-
-# Open shell in container for debugging
-make docker-shell
-```
-
-#### Option B: Pass credentials directly
-
-```bash
-# Run with manual parameters
+# Run pgslice
 docker run --rm -it \
-  --user $(id -u):$(id -g) \
   -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
   -e PGPASSWORD=your_password \
-  pgslice:latest \
-  pgslice --host host.docker.internal --port 5432 --user postgres --database test_db
+  <your-dockerhub-username>/pgslice:latest \
+  pgslice --host your.db.host --port 5432 --user your_user --database your_db
 ```
 
-## Usage Examples
+### From Source (Development)
 
-Quick examples for testing during development:
+See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions.
+
+## Quick Start
 
 ```bash
 # In REPL:
@@ -161,61 +119,6 @@ Key environment variables (see `.env.example` for full reference):
 | `LOG_LEVEL` | Logging level | `INFO` |
 | `PGSLICE_OUTPUT_DIR` | Output directory | `~/.pgslice/dumps` |
 
-## Development Workflow
-
-### Running Code Quality Checks
-
-```bash
-make all-checks      # Run all quality checks (lint, format, type-check)
-make lint            # Check code style with ruff
-make lint-fix        # Auto-fix safe linting issues
-make lint-fix-all    # Auto-fix all linting issues (including unsafe)
-make format          # Format code with ruff
-make format-check    # Check formatting without changes
-make type-check      # Run mypy type checking
-make imports         # Sort and organize imports
-```
-
-### Testing
-
-```bash
-make test          # Run all tests with coverage
-make test-parallel # Run tests in parallel (faster)
-make test-unit     # Run unit tests only
-make test-cov      # Generate HTML coverage report
-make test-ci       # CI-optimized parallel test run
-make test-fast     # Quick test run (no coverage)
-```
-
-Tests use pytest with:
-- **pytest-xdist**: Parallel test execution for speed
-- **pytest-mock**: Mocking database connections and external dependencies
-- **freezegun**: Time-sensitive tests (caching TTL, timestamps)
-- **Faker**: Realistic test data generation
-- **80% minimum coverage** enforced (aiming for 100%)
-
-### Building & Publishing
-
-```bash
-make build-dist      # Build distribution packages
-make install-local   # Install locally for testing
-make publish-test    # Publish to TestPyPI
-make publish         # Publish to production PyPI (requires confirmation)
-```
-
-### Available Make Commands
-
-Run `make help` to see all available commands.
-
-### Detailed Development Guide
-
-For comprehensive development documentation including:
-- Code quality standards and mypy configuration
-- Type checking and Python 3.10+ compatibility
-- Module organization and architecture
-- Common patterns and adding new features
-- FK remapping implementation details
-
 ## Security
 
 - ✅ **Parameterized queries**: All SQL uses proper parameterization
@@ -223,33 +126,22 @@ For comprehensive development documentation including:
 - ✅ **Secure passwords**: Never logged or stored
 - ✅ **Read-only enforcement**: Safe for production databases
 
-## Troubleshooting
-
-### Common Issues
-
-1. **Permission denied on output files (Docker)**
-   - Make sure you're using `--user $(id -u):$(id -g)` with docker run
-   - The Makefile commands handle this automatically
-
-2. **Cannot connect to database from Docker**
-   - Mac/Windows: Use `host.docker.internal` as DB_HOST
-   - Linux: Use `host.docker.internal` or `--network host`
-
-3. **Schema cache issues**
-   - Clear cache: `pgslice --no-cache`
-   - Or delete cache directory: `rm -rf ~/.cache/pgslice`
-
-4. **Import errors after installation**
-   - Ensure virtual environment is activated: `source .venv/bin/activate`
-   - Or use `uv run pgslice` which handles venv automatically
-
 ## Contributing
 
-Contributions welcome! Please ensure:
-- Code passes all checks: `make all-checks`
-- Type checking passes (mypy strict mode)
-- Code is formatted with ruff
-- Pre-commit hooks are installed: `uv run pre-commit install`
+Contributions are welcome! See [DEVELOPMENT.md](DEVELOPMENT.md) for comprehensive development documentation including:
+- Local development setup
+- Code quality standards and testing guidelines
+- Version management and publishing workflow
+- Architecture and design patterns
+
+**Quick start for contributors:**
+```bash
+make setup        # One-time setup (installs dependencies, hooks)
+make test         # Run all tests
+git commit        # Pre-commit hooks run automatically (linting, formatting, type-checking)
+```
+
+For troubleshooting common development issues, see the [Troubleshooting section in DEVELOPMENT.md](DEVELOPMENT.md#troubleshooting).
 
 ## License
 
