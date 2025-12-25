@@ -38,6 +38,7 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-mock>=3.11.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-xdist>=3.5.0",
     "mypy>=1.5.0",
     "ruff>=0.1.0",
     "freezegun>=1.2.0",
@@ -104,14 +105,19 @@ module = "tabulate.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-# testpaths = ["tests"]  # Tests have been removed
+testpaths = ["tests"]
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
-addopts = "-v --cov=src/pgslice --cov-report=html --cov-report=term"
+addopts = "-v --cov=src/pgslice --cov-report=html --cov-report=term-missing --cov-fail-under=80"
+markers = [
+    "slow: marks tests as slow",
+    "integration: marks tests requiring database",
+]
 
 [tool.coverage.run]
 source = ["src/pgslice"]
+branch = true
 omit = ["*/tests/*", "*/__pycache__/*"]
 
 [tool.coverage.report]
@@ -123,3 +129,5 @@ exclude_lines = [
     "raise NotImplementedError",
     "if TYPE_CHECKING:",
 ]
+fail_under = 80
+show_missing = true

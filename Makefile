@@ -4,7 +4,7 @@ MAKEFLAGS += --no-print-directory --silent
 -include .env
 export
 
-.PHONY: help install dev-install test coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-run docker-shell all-checks lint-fix lint-fix-all format-check uv-install sync lock test-compat setup imports run run-repl show-version bump-patch bump-minor bump-major
+.PHONY: help install dev-install test test-unit test-parallel test-cov test-ci test-fast test-integration coverage lint format type-check clean build-dist install-local publish-test publish docker-build docker-run docker-shell all-checks lint-fix lint-fix-all format-check uv-install sync lock test-compat setup imports run run-repl show-version bump-patch bump-minor bump-major
 
 # Default target
 .DEFAULT_GOAL := help
@@ -33,6 +33,23 @@ run-repl:  ## Run pgslice REPL (loads .env automatically)
 	fi
 	uv run pgslice --host $(DB_HOST) --port $(DB_PORT) --user $(DB_USER) --database $(DB_NAME)
 
+# Testing commands
+test:  ## Run all tests with coverage
+	uv run pytest
+
+test-unit:  ## Run unit tests only
+	uv run pytest tests/unit -v
+
+test-parallel:  ## Run tests in parallel (faster)
+	uv run pytest -n auto
+
+test-cov:  ## Run tests with HTML coverage report
+	uv run pytest --cov-report=html --cov-report=term-missing
+	@echo "Coverage report: htmlcov/index.html"
+
+test-integration:  ## Run integration tests (requires PostgreSQL)
+	uv run pytest tests/integration -v -m integration
+
 lint:  ## Run ruff linter
 	uv run ruff check $(SRC_DIR)
 
@@ -56,6 +73,7 @@ type-check:  ## Run mypy type checker
 
 all-checks:  ## Run all quality checks (tests, lint, format, type-check)
 	echo "Running all checks..."
+	$(MAKE) test
 	$(MAKE) lint
 	$(MAKE) format-check
 	$(MAKE) type-check

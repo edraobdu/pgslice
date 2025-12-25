@@ -448,3 +448,16 @@ class SchemaCache:
             parts = full_name.split(".", 1)
             return parts[0], parts[1]
         return "public", full_name
+
+    def __enter__(self) -> SchemaCache:
+        """Enter context manager."""
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
+    ) -> None:
+        """Exit context manager."""
+        pass

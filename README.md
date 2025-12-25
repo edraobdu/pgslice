@@ -6,6 +6,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/pgslice.svg)](https://pypi.org/project/pgslice/)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/your-repo/pgslice)
 
 Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
@@ -174,6 +175,24 @@ make format-check    # Check formatting without changes
 make type-check      # Run mypy type checking
 make imports         # Sort and organize imports
 ```
+
+### Testing
+
+```bash
+make test          # Run all tests with coverage
+make test-parallel # Run tests in parallel (faster)
+make test-unit     # Run unit tests only
+make test-cov      # Generate HTML coverage report
+make test-ci       # CI-optimized parallel test run
+make test-fast     # Quick test run (no coverage)
+```
+
+Tests use pytest with:
+- **pytest-xdist**: Parallel test execution for speed
+- **pytest-mock**: Mocking database connections and external dependencies
+- **freezegun**: Time-sensitive tests (caching TTL, timestamps)
+- **Faker**: Realistic test data generation
+- **80% minimum coverage** enforced (aiming for 100%)
 
 ### Building & Publishing
 
