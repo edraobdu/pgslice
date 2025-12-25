@@ -18,15 +18,8 @@ help:  ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' Makefile | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# Local development commands
-run:  ## Run pgslice (loads .env automatically)
-	@if [ ! -f .env ]; then \
-		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
-		exit 1; \
-	fi
-	uv run pgslice
-
-run-repl:  ## Run pgslice REPL (loads .env automatically)
+## Run pgslice REPL (loads .env automatically)
+run:
 	@if [ ! -f .env ]; then \
 		echo "Error: .env file not found. Run 'cp .env.example .env' and configure it."; \
 		exit 1; \
@@ -69,19 +62,16 @@ clean:  ## Remove build artifacts and cache
 
 # Version management
 show-version:  ## Show current version from pyproject.toml
-	@grep '^version = ' pyproject.toml | cut -d'"' -f2
+	@uv version
 
 bump-patch:  ## Bump patch version (0.1.1 -> 0.1.2)
-	@uv run python scripts/bump_version.py patch
-	@echo "Version bumped to $$($(MAKE) show-version)"
+	@uv version --bump patch
 
 bump-minor:  ## Bump minor version (0.1.1 -> 0.2.0)
-	@uv run python scripts/bump_version.py minor
-	@echo "Version bumped to $$($(MAKE) show-version)"
+	@uv version --bump minor
 
 bump-major:  ## Bump major version (0.1.1 -> 1.0.0)
-	@uv run python scripts/bump_version.py major
-	@echo "Version bumped to $$($(MAKE) show-version)"
+	@uv version --bump major
 
 # Python package building and publishing
 build-dist: clean  ## Build Python distribution packages (wheel + sdist)
