@@ -50,35 +50,10 @@ test-cov:  ## Run tests with HTML coverage report
 test-integration:  ## Run integration tests (requires PostgreSQL)
 	uv run pytest tests/integration -v -m integration
 
-lint:  ## Run ruff linter
-	uv run ruff check $(SRC_DIR)
-
-lint-fix:  ## Auto-fix linting issues (safe fixes only)
-	uv run ruff check --fix $(SRC_DIR)
-
-lint-fix-all:  ## Auto-fix all linting issues including unsafe fixes
-	uv run ruff check --fix --unsafe-fixes $(SRC_DIR)
-
-imports:  ## Sort and organize imports with ruff
-	@uv run ruff check --select I --fix $(SRC_DIR)
-
-format:  ## Format code with ruff
-	uv run ruff format $(SRC_DIR)
-
-format-check:  ## Check code formatting
-	uv run ruff format --check $(SRC_DIR)
-
-type-check:  ## Run mypy type checker
-	uv run mypy $(SRC_DIR)
-
-all-checks:  ## Run all quality checks (tests, lint, format, type-check)
-	echo "Running all checks..."
+all-checks:  ## Run all tests (pre-commit hooks handle linting/formatting/type-checking)
+	echo "Running all tests..."
 	$(MAKE) test
-	$(MAKE) lint
-	$(MAKE) format-check
-	$(MAKE) type-check
-	$(MAKE) imports
-	echo "All checks passed!"
+	echo "All tests passed! Run 'git commit' to run pre-commit hooks for linting/formatting/type-checking."
 
 clean:  ## Remove build artifacts and cache
 	rm -rf build/
