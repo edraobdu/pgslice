@@ -30,9 +30,6 @@ run:
 test:  ## Run all tests with coverage
 	uv run pytest
 
-test-unit:  ## Run unit tests only
-	uv run pytest tests/unit -v
-
 test-parallel:  ## Run tests in parallel (faster)
 	uv run pytest -n auto
 
@@ -40,13 +37,6 @@ test-cov:  ## Run tests with HTML coverage report
 	uv run pytest --cov-report=html --cov-report=term-missing
 	@echo "Coverage report: htmlcov/index.html"
 
-test-integration:  ## Run integration tests (requires PostgreSQL)
-	uv run pytest tests/integration -v -m integration
-
-all-checks:  ## Run all tests (pre-commit hooks handle linting/formatting/type-checking)
-	echo "Running all tests..."
-	$(MAKE) test
-	echo "All tests passed! Run 'git commit' to run pre-commit hooks for linting/formatting/type-checking."
 
 clean:  ## Remove build artifacts and cache
 	rm -rf build/

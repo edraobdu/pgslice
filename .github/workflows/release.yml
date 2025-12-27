@@ -1,0 +1,109 @@
+name: Create Release PR
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_bump:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
+
+jobs:
+  # Call existing test workflow
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  # Call existing lint workflow
+  lint:
+    uses: ./.github/workflows/lint.yml
+
+  # Only run release if tests and lint pass
+  release:
+    needs: [test, lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # Needed to push commits and tags
+      pull-requests: write  # Needed to create pull requests
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Get current version
+        id: current_version
+        run: |
+          VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Bump version
+        id: bump_version
+        run: |
+          uv version --bump ${{ inputs.version_bump }}
+          NEW_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml
+          git commit -m "Bump version to ${{ steps.bump_version.outputs.new_version }}"
+
+      - name: Create release branch
+        id: create_branch
+        run: |
+          BRANCH_NAME="release/v${{ steps.bump_version.outputs.new_version }}"
+          git checkout -b "$BRANCH_NAME"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+
+      - name: Push release branch
+        run: |
+          git push origin ${{ steps.create_branch.outputs.branch_name }}
+
+      - name: Create Pull Request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --base main \
+            --head ${{ steps.create_branch.outputs.branch_name }} \
+            --title "Release v${{ steps.bump_version.outputs.new_version }}" \
+            --body "## Release v${{ steps.bump_version.outputs.new_version }}
+
+          This PR bumps the version from ${{ steps.current_version.outputs.version }} to ${{ steps.bump_version.outputs.new_version }}.
+
+          ### Pre-merge Checklist
+          - [ ] All tests pass
+          - [ ] All lint checks pass
+          - [ ] Version bump is correct
+
+          ### Post-merge Actions
+          Once merged, the following will happen automatically:
+          1. Git tag \`v${{ steps.bump_version.outputs.new_version }}\` will be created
+          2. GitHub release will be published
+          3. PyPI publish workflow will trigger
+
+          ---
+          🤖 This PR was created automatically by the release workflow" \
+            --label "release"
+
+      - name: Output PR info
+        run: |
+          echo "✅ Release PR created successfully!"
+          echo "Review and merge the PR to finalize the release."
