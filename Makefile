@@ -136,7 +136,7 @@ test-compat:  ## Test compatibility across Python versions
 
 setup:  ## One-time local development setup
 	@echo "Copying env file..."
-	cp .env.template .env
+	cp .env.example .env
 	@echo "Setting up local development environment..."
 	@command -v uv >/dev/null 2>&1 || (echo "Installing uv..." && curl -LsSf https://astral.sh/uv/install.sh | sh)
 	@echo "Installing Python 3.14..."

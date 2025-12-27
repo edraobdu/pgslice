@@ -125,6 +125,9 @@ class REPL:
             printy(
                 "  --keep-pks            Keep original primary key values (default: remap auto-generated PKs)"
             )
+            printy(
+                "  --create-schema       Include CREATE DATABASE/SCHEMA/TABLE statements"
+            )
             return
 
         table_name = args[0]
@@ -139,6 +142,7 @@ class REPL:
         timeframe_specs: list[str] = []
         wide_mode = False
         keep_pks = False  # Default: remap auto-generated PKs
+        create_schema_ddl = self.config.create_schema  # Default from config
 
         i = 2
         while i < len(args):
@@ -156,6 +160,9 @@ class REPL:
                 i += 1
             elif args[i] == "--keep-pks":
                 keep_pks = True
+                i += 1
+            elif args[i] == "--create-schema":
+                create_schema_ddl = True
                 i += 1
             else:
                 i += 1
@@ -215,7 +222,13 @@ class REPL:
             generator = SQLGenerator(
                 introspector, batch_size=self.config.sql_batch_size
             )
-            sql = generator.generate_batch(sorted_records, keep_pks=keep_pks)
+            sql = generator.generate_batch(
+                sorted_records,
+                keep_pks=keep_pks,
+                create_schema=create_schema_ddl,
+                database_name=self.config.db.database,
+                schema_name=schema,
+            )
 
             # Output
             if output_file:

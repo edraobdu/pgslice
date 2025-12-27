@@ -37,6 +37,7 @@ Extract only what you need while maintaining referential integrity.
 - ✅ **Multiple records**: Extract multiple records in one operation
 - ✅ **Timeframe filtering**: Filter specific tables by date ranges
 - ✅ **PK remapping**: Auto-remaps auto-generated primary keys for clean imports
+- ✅ **DDL generation**: Optionally include CREATE DATABASE/SCHEMA/TABLE statements for self-contained dumps
 - ✅ **Interactive REPL**: User-friendly command-line interface
 - ✅ **Schema caching**: SQLite-based caching for improved performance
 - ✅ **Type-safe**: Full type hints with mypy strict mode
@@ -115,6 +116,14 @@ pgslice> describe "film"
 # and no conflicts will arise.
 # If you want to keep the original id's run:
 pgslice> dump "film" 1 --keep-pks --output film_1.sql
+
+# Generate self-contained SQL with DDL statements (NEW in v0.2.0)
+# This creates a fully self-contained SQL file with:
+# - CREATE DATABASE IF NOT EXISTS
+# - CREATE SCHEMA IF NOT EXISTS
+# - CREATE TABLE IF NOT EXISTS for all tables
+# - All INSERT statements with data
+pgslice> dump "film" 1 --create-schema --output film_1_complete.sql
 ```
 
 ## Configuration

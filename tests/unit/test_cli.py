@@ -89,6 +89,26 @@ class TestMain:
             # Cache should be disabled
             assert mock_config.cache.enabled is False
 
+    def test_create_schema_flag(self) -> None:
+        """Should enable create_schema when --create-schema is used."""
+        with (
+            patch.object(
+                sys, "argv", ["pgslice", "--create-schema", "--host", "localhost"]
+            ),
+            patch("pgslice.cli.load_config") as mock_load,
+        ):
+            mock_config = MagicMock()
+            mock_config.db.host = ""
+            mock_config.db.user = ""
+            mock_config.db.database = ""
+            mock_config.create_schema = False
+            mock_load.return_value = mock_config
+
+            main()
+
+            # create_schema should be enabled
+            assert mock_config.create_schema is True
+
     def test_cli_args_override_config(self) -> None:
         """CLI arguments should override config values."""
         with (

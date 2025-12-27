@@ -74,6 +74,11 @@ Examples:
         action="store_true",
         help="Clear schema cache and exit",
     )
+    parser.add_argument(
+        "--create-schema",
+        action="store_true",
+        help="Include DDL statements (CREATE DATABASE/SCHEMA/TABLE) in SQL dumps",
+    )
 
     # Other arguments
     parser.add_argument(
@@ -117,6 +122,8 @@ Examples:
             config.db.schema = args.schema
         if args.no_cache:
             config.cache.enabled = False
+        if args.create_schema:
+            config.create_schema = True
 
         config.log_level = args.log_level
 
