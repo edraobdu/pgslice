@@ -4,9 +4,11 @@
 
 # pgslice
 
-[![PyPI version](https://img.shields.io/pypi/v/pgslice.svg)](https://pypi.org/project/pgslice/)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Coverage](https://img.shields.io/badge/coverage-100%25-brightgreen.svg)](https://github.com/your-repo/pgslice)
+![Codecov](https://img.shields.io/codecov/c/gh/edraobdu/pgslice?logo=codecov&style=flat-square)
+![PyPI](https://img.shields.io/pypi/v/pgslice?style=flat-square)
+![PyPI - Wheel](https://img.shields.io/pypi/wheel/pgslice?style=flat-square)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pgslice?logo=python&logoColor=blue&style=flat-square)
+![PyPI - License](https://img.shields.io/pypi/l/pgslice?style=flat-square)
 
 Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
