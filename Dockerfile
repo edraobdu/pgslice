@@ -1,43 +1,41 @@
-# Use a Python image with uv pre-installed
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+# Use official Python Alpine image for stability
+FROM python:3.13-alpine
+
+# Copy uv binary directly from official uv image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    postgresql-client \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache postgresql-client
 
 # Install the project into `/app`
 WORKDIR /app
 
 # Enable bytecode compilation for faster startup
 ENV UV_COMPILE_BYTECODE=1
-
+ENV UV_SYSTEM_PYTHON=1
 # Copy from the cache instead of linking since it's a mounted volume
 ENV UV_LINK_MODE=copy
 
-# Install dependencies first (without the project) for better layer caching
+# Export runtime dependencies to requirements.txt and install to system Python
 # This allows Docker to cache dependencies separately from source code changes
 RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=uv.lock,target=uv.lock \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    uv sync --frozen --no-install-project
+    uv export --frozen --no-dev --no-emit-project --format requirements.txt --no-hashes -o requirements.txt && \
+    uv pip install -r requirements.txt
 
 # Copy the rest of the project source code
 COPY . /app
 
-# Install the project itself
+# Install the project itself (production dependencies only)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen
-
-# Place executables in the environment at the front of the path
-# This makes the venv "active" without manual activation
-ENV PATH="/app/.venv/bin:$PATH"
+    uv pip install --no-deps -e .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
-# Create non-root user for proper file permissions
-RUN useradd -m -u 1000 pgslice && \
+# Create non-root user for proper file permissions (Alpine syntax)
+RUN adduser -D -u 1000 pgslice && \
     mkdir -p /home/pgslice/.cache/pgslice /home/pgslice/.pgslice/dumps && \
     chown -R pgslice:pgslice /app /home/pgslice
 

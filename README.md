@@ -1,14 +1,21 @@
+# PgSlice
+
 <p align="center">
-  <img src="assets/logo.png" alt="PgSlice Logo" width="300">
+  <img src="assets/logo.png" alt="PgSlice Logo" width="200">
 </p>
 
-# pgslice
+<p align="center">
+  <em>Bump only what you need</em>
+</p>
 
-![Codecov](https://img.shields.io/codecov/c/gh/edraobdu/pgslice?logo=codecov&style=flat-square)
 ![PyPI](https://img.shields.io/pypi/v/pgslice?style=flat-square)
+![Docker Image Version](https://img.shields.io/docker/v/edraobdu/pgslice?sort=semver&style=flat-square&logo=docker)
+![Codecov](https://img.shields.io/codecov/c/gh/edraobdu/pgslice?logo=codecov&style=flat-square)
 ![PyPI - Wheel](https://img.shields.io/pypi/wheel/pgslice?style=flat-square)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/pgslice?logo=python&logoColor=blue&style=flat-square)
 ![PyPI - License](https://img.shields.io/pypi/l/pgslice?style=flat-square)
+
+
 
 Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
@@ -54,14 +61,20 @@ uv tool install pgslice
 
 ```bash
 # Pull the image
-docker pull <your-dockerhub-username>/pgslice:latest
+docker pull edraobdu/pgslice:latest
 
 # Run pgslice
 docker run --rm -it \
   -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
   -e PGPASSWORD=your_password \
-  <your-dockerhub-username>/pgslice:latest \
+  edraobdu/pgslice:latest \
   pgslice --host your.db.host --port 5432 --user your_user --database your_db
+
+# Pin to specific version
+docker pull edraobdu/pgslice:0.1.1
+
+# Use specific platform
+docker pull --platform linux/amd64 edraobdu/pgslice:latest
 ```
 
 ### From Source (Development)
