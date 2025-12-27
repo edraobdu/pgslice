@@ -371,7 +371,7 @@ wheels = [
 
 [[package]]
 name = "pgslice"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "printy" },
@@ -401,7 +401,7 @@ requires-dist = [
     { name = "freezegun", marker = "extra == 'dev'", specifier = ">=1.2.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.5.0" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0.0" },
-    { name = "printy", specifier = ">=2.2.0" },
+    { name = "printy", specifier = "==3.0.0" },
     { name = "prompt-toolkit", specifier = ">=3.0.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.4.0" },
@@ -451,11 +451,11 @@ wheels = [
 
 [[package]]
 name = "printy"
-version = "2.2.0"
+version = "3.0.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cd/0a/5ae6e5d28e58855052d576d95dee1e70f2d6d2172e0ab482dc54f97596c7/printy-2.2.0.tar.gz", hash = "sha256:bfb21f9e6ea6f3185de929c488026b2fbfc29a863f91b7d2e674f4e49ca6ee1c", size = 22056, upload-time = "2021-03-01T03:51:45.501Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/85/e394b48e5c93f6eeabd9a160507cc95c0998297f4962d1aa598692a345a5/printy-3.0.0.tar.gz", hash = "sha256:2760dac665f02466e619ac3e337881533c5a8ee1dc0cc447062497865cbe0d05", size = 22202, upload-time = "2025-12-27T01:51:45.139Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/99/14ad885f31be995a39ccacb12a4673eccdb1a89a2df7bb4f2e5493aa4ca7/printy-2.2.0-py3-none-any.whl", hash = "sha256:8c31c8fe414a474b02eb47ced9db6837ea8c15fa3d502fa89887cdc6b9de7901", size = 24279, upload-time = "2021-03-01T03:51:44.25Z" },
+    { url = "https://files.pythonhosted.org/packages/36/79/5f0fb8a5e6a35c0bb5221e0fb912e210b64a26684a0be7cf1af3dc45e5db/printy-3.0.0-py3-none-any.whl", hash = "sha256:d5773dd5fac991c726edc0e5d83b9ad7d33aa1adcc6f1849be489ea6223c997f", size = 14894, upload-time = "2025-12-27T01:51:43.989Z" },
 ]
 
 [[package]]
