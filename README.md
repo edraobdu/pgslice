@@ -32,12 +32,14 @@ Extract only what you need while maintaining referential integrity.
 
 ## Features
 
+- ✅ **CLI-first design**: Stream SQL to stdout for easy piping and scripting
 - ✅ **Bidirectional FK traversal**: Follows relationships in both directions (forward and reverse)
 - ✅ **Circular relationship handling**: Prevents infinite loops with visited tracking
 - ✅ **Multiple records**: Extract multiple records in one operation
 - ✅ **Timeframe filtering**: Filter specific tables by date ranges
 - ✅ **PK remapping**: Auto-remaps auto-generated primary keys for clean imports
-- ✅ **Interactive REPL**: User-friendly command-line interface
+- ✅ **DDL generation**: Optionally include CREATE DATABASE/SCHEMA/TABLE statements for self-contained dumps
+- ✅ **Progress bar**: Visual progress indicator for dump operations
 - ✅ **Schema caching**: SQLite-based caching for improved performance
 - ✅ **Type-safe**: Full type hints with mypy strict mode
 - ✅ **Secure**: SQL injection prevention, secure password handling
@@ -83,39 +85,135 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions
 
 ## Quick Start
 
+### CLI Mode
+
+The CLI mode streams SQL to stdout by default, making it easy to pipe or redirect output:
+
 ```bash
-# In REPL:
-# This will dump all related records to the film with id 1
-# The generated SQL file will be placed, by default, in ~/.pgslice/dumps
-# The name will be a formated string with table name, id, and timestamp
-pgslice> dump "film" 1
+# Basic dump to stdout (pipe to file)
+PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 42 > user_42.sql
 
-# You can overwrite the output path with:
-pgslice> dump "film" 1 --output film_1.sql
+# Multiple records
+PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 1,2,3 > users.sql
 
-# Extract multiple records
-pgslice> dump "actor" 1,2,3 --output multiple_actors.sql
+# Output directly to file with --output flag
+pgslice --host localhost --database mydb --table users --pks 42 --output user_42.sql
 
-# Use wide mode to follow all relationships (including self-referencing FKs)
-# Be cautions that this can result in larger datasets. So use with caution
-pgslice> dump "customer" 42 --wide --output customer_42.sql
+# Dump by timeframe (instead of PKs) - filters main table by date range
+pgslice --host localhost --database mydb --table orders \
+    --timeframe "created_at:2024-01-01:2024-12-31" > orders_2024.sql
 
-# Apply timeframe filter
-pgslice> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
+# Wide mode: follow all relationships including self-referencing FKs
+# Be cautious - this can result in larger datasets
+pgslice --host localhost --database mydb --table customer --pks 42 --wide > customer.sql
 
-# List all tables
-pgslice> tables
+# Keep original primary keys (no remapping)
+pgslice --host localhost --database mydb --table film --pks 1 --keep-pks > film.sql
 
-# Show table structure and relationships
-pgslice> describe "film"
+# Generate self-contained SQL with DDL statements
+# Includes CREATE DATABASE/SCHEMA/TABLE statements
+pgslice --host localhost --database mydb --table film --pks 1 --create-schema > film_complete.sql
 
-# Keep original primary key values (no remapping)
-# By default, we will dinamically assign ids to the new generated records
-# and handle conflicts gracefully. Meaninh, you can run the same file multiple times
-# and no conflicts will arise.
-# If you want to keep the original id's run:
-pgslice> dump "film" 1 --keep-pks --output film_1.sql
+# Apply truncate filter to limit related tables by date range
+pgslice --host localhost --database mydb --table customer --pks 42 \
+    --truncate "rental:rental_date:2024-01-01:2024-12-31" > customer.sql
+
+# Enable debug logging (writes to stderr)
+pgslice --host localhost --database mydb --table users --pks 42 \
+    --log-level DEBUG 2>debug.log > output.sql
 ```
+
+### Schema Exploration
+
+```bash
+# List all tables in the schema
+pgslice --host localhost --database mydb --tables
+
+# Describe table structure and relationships
+pgslice --host localhost --database mydb --describe users
+```
+
+### SSH Remote Execution
+
+Run pgslice on a remote server and capture output locally:
+
+```bash
+# Execute on remote server, save output locally
+ssh remote.server.com "PGPASSWORD=xxx pgslice --host db.internal --database mydb \
+    --table users --pks 1 --create-schema" > local_dump.sql
+
+# With SSH tunnel for database access
+ssh -f -N -L 5433:db.internal:5432 bastion.example.com
+PGPASSWORD=xxx pgslice --host localhost --port 5433 --database mydb \
+    --table users --pks 42 > user.sql
+```
+
+### Interactive REPL
+
+```bash
+# Start interactive REPL
+pgslice --host localhost --database mydb
+
+pgslice> dump "film" 1 --output film_1.sql
+pgslice> tables
+pgslice> describe "film"
+```
+
+## CLI vs REPL: Output Behavior
+
+Understanding the difference between CLI and REPL modes:
+
+### CLI Mode (stdout by default)
+The CLI streams SQL to **stdout** by default, perfect for piping and scripting:
+
+```bash
+# Streams to stdout - redirect with >
+pgslice --table users --pks 42 > user_42.sql
+
+# Or use --output flag
+pgslice --table users --pks 42 --output user_42.sql
+
+# Pipe to other commands
+pgslice --table users --pks 42 | gzip > user_42.sql.gz
+```
+
+### REPL Mode (files by default)
+The REPL writes to **`~/.pgslice/dumps/`** by default when `--output` is not specified:
+
+```bash
+# In REPL: writes to ~/.pgslice/dumps/public_users_42.sql
+pgslice> dump "users" 42
+
+# Specify custom output path
+pgslice> dump "users" 42 --output /path/to/user.sql
+```
+
+### Same Operations, Different Modes
+
+| Operation | CLI | REPL |
+|-----------|-----|------|
+| **List tables** | `pgslice --tables` | `pgslice> tables` |
+| **Describe table** | `pgslice --describe users` | `pgslice> describe "users"` |
+| **Dump to stdout** | `pgslice --table users --pks 42` | N/A (REPL always writes to file) |
+| **Dump to file** | `pgslice --table users --pks 42 --output user.sql` | `pgslice> dump "users" 42 --output user.sql` |
+| **Dump (default)** | Stdout | `~/.pgslice/dumps/public_users_42.sql` |
+| **Multiple PKs** | `pgslice --table users --pks 1,2,3` | `pgslice> dump "users" 1,2,3` |
+| **Truncate filter** | `pgslice --table users --pks 42 --truncate "orders:2024-01-01:2024-12-31"` | `pgslice> dump "users" 42 --truncate "orders:2024-01-01:2024-12-31"` |
+| **Wide mode** | `pgslice --table users --pks 42 --wide` | `pgslice> dump "users" 42 --wide` |
+
+### When to Use Each Mode
+
+**Use CLI mode when:**
+- Piping output to other commands
+- Scripting and automation
+- Remote execution via SSH
+- One-off dumps
+
+**Use REPL mode when:**
+- Exploring database schema interactively
+- Running multiple dumps in a session
+- You prefer persistent file output
+- Testing different dump configurations
 
 ## Configuration
 
@@ -131,7 +229,7 @@ Key environment variables (see `.env.example` for full reference):
 | `PGPASSWORD` | Database password (env var only) | - |
 | `CACHE_ENABLED` | Enable schema caching | `true` |
 | `CACHE_TTL_HOURS` | Cache time-to-live | `24` |
-| `LOG_LEVEL` | Logging level | `INFO` |
+| `LOG_LEVEL` | Logging level (disabled by default unless specified) | disabled |
 | `PGSLICE_OUTPUT_DIR` | Output directory | `~/.pgslice/dumps` |
 
 ## Security

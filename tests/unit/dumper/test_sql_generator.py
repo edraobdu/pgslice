@@ -1767,3 +1767,142 @@ class TestInsertWithFkRemappingAdvanced:
         # Should include ON CONFLICT clause
         assert "ON CONFLICT" in sql
         assert "DO UPDATE SET" in sql
+
+
+class TestCreateSchemaIntegration(TestSQLGenerator):
+    """Integration tests for create_schema flag."""
+
+    def test_generate_batch_with_create_schema_and_keep_pks(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should include DDL when create_schema=True with keep_pks=True."""
+        generator = SQLGenerator(mock_introspector, batch_size=100)
+
+        # Create test records
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="users", schema_name="public", pk_values=("1",)
+                ),
+                data={
+                    "id": 1,
+                    "name": "Alice",
+                    "email": "alice@example.com",
+                    "age": 30,
+                },
+                dependencies=set(),
+            ),
+        ]
+
+        # Generate with DDL
+        sql = generator.generate_batch(
+            records,
+            keep_pks=True,
+            create_schema=True,
+            database_name="testdb",
+            schema_name="public",
+        )
+
+        # Verify DDL statements are present
+        assert '-- CREATE DATABASE "testdb";' in sql
+        assert 'CREATE SCHEMA IF NOT EXISTS "public"' in sql
+        assert 'CREATE TABLE IF NOT EXISTS "public"."users"' in sql
+
+        # Verify INSERT statements are also present
+        assert "INSERT INTO" in sql
+        assert "Alice" in sql
+
+    def test_generate_batch_with_create_schema_and_plpgsql(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should include DDL when create_schema=True with PL/pgSQL remapping."""
+        generator = SQLGenerator(mock_introspector, batch_size=100)
+
+        # Create test records
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="users", schema_name="public", pk_values=("1",)
+                ),
+                data={"name": "Bob", "email": "bob@example.com", "age": 25},
+                dependencies=set(),
+            ),
+        ]
+
+        # Generate with DDL and PL/pgSQL remapping
+        sql = generator.generate_batch(
+            records,
+            keep_pks=False,  # Triggers PL/pgSQL mode
+            create_schema=True,
+            database_name="testdb",
+            schema_name="public",
+        )
+
+        # Verify DDL statements are present
+        assert '-- CREATE DATABASE "testdb";' in sql
+        assert 'CREATE SCHEMA IF NOT EXISTS "public"' in sql
+        assert 'CREATE TABLE IF NOT EXISTS "public"."users"' in sql
+
+        # Verify PL/pgSQL block is also present
+        assert "DO $$" in sql or "CREATE TEMP TABLE" in sql
+
+    def test_generate_batch_without_create_schema(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should NOT include DDL when create_schema=False (default)."""
+        generator = SQLGenerator(mock_introspector, batch_size=100)
+
+        # Create test records
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="users", schema_name="public", pk_values=("1",)
+                ),
+                data={
+                    "id": 1,
+                    "name": "Charlie",
+                    "email": "charlie@example.com",
+                    "age": 35,
+                },
+                dependencies=set(),
+            ),
+        ]
+
+        # Generate without DDL
+        sql = generator.generate_batch(records, keep_pks=True, create_schema=False)
+
+        # Verify DDL statements are NOT present
+        assert "CREATE DATABASE" not in sql
+        assert "CREATE SCHEMA" not in sql
+        assert "CREATE TABLE" not in sql
+
+        # Verify INSERT statements are present
+        assert "INSERT INTO" in sql
+        assert "Charlie" in sql
+
+    def test_create_schema_requires_database_name(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should not generate DDL if database_name is not provided."""
+        generator = SQLGenerator(mock_introspector, batch_size=100)
+
+        # Create test records
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="users", schema_name="public", pk_values=("1",)
+                ),
+                data={"id": 1, "name": "Dave", "email": "dave@example.com", "age": 40},
+                dependencies=set(),
+            ),
+        ]
+
+        # Generate with create_schema=True but no database_name
+        sql = generator.generate_batch(
+            records, keep_pks=True, create_schema=True, database_name=None
+        )
+
+        # Verify DDL is not generated without database name
+        assert "CREATE DATABASE" not in sql
+        assert "CREATE SCHEMA" not in sql
+        assert "CREATE TABLE" not in sql

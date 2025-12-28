@@ -10,6 +10,7 @@ from uuid import UUID
 from ..db.schema import SchemaIntrospector
 from ..graph.models import RecordData, RecordIdentifier, Table
 from ..utils.logging_config import get_logger
+from .ddl_generator import DDLGenerator
 
 logger = get_logger(__name__)
 
@@ -99,6 +100,9 @@ class SQLGenerator:
         records: list[RecordData],
         include_transaction: bool = True,
         keep_pks: bool = False,
+        create_schema: bool = False,
+        database_name: str | None = None,
+        schema_name: str = "public",
     ) -> str:
         """
         Generate SQL for multiple records with proper ordering and bulk INSERTs.
@@ -108,19 +112,29 @@ class SQLGenerator:
             include_transaction: Whether to wrap in BEGIN/COMMIT
             keep_pks: If True, keep original PK values (current behavior).
                      If False, exclude auto-generated PKs and use PL/pgSQL remapping.
+            create_schema: If True, include DDL statements (CREATE DATABASE/SCHEMA/TABLE)
+            database_name: Database name for CREATE DATABASE statement (required if create_schema=True)
+            schema_name: Schema name for CREATE SCHEMA statement
 
         Returns:
             Complete SQL script
         """
         if keep_pks:
-            return self._generate_batch_with_pks(records, include_transaction)
+            return self._generate_batch_with_pks(
+                records, include_transaction, create_schema, database_name, schema_name
+            )
         else:
             return self._generate_batch_with_plpgsql_remapping(
-                records, include_transaction
+                records, include_transaction, create_schema, database_name, schema_name
             )
 
     def _generate_batch_with_pks(
-        self, records: list[RecordData], include_transaction: bool
+        self,
+        records: list[RecordData],
+        include_transaction: bool,
+        create_schema: bool = False,
+        database_name: str | None = None,
+        schema_name: str = "public",
     ) -> str:
         """
         Generate SQL with original PK values (current behavior).
@@ -128,6 +142,9 @@ class SQLGenerator:
         Args:
             records: List of RecordData in dependency order
             include_transaction: Whether to wrap in BEGIN/COMMIT
+            create_schema: If True, include DDL statements
+            database_name: Database name for CREATE DATABASE (required if create_schema=True)
+            schema_name: Schema name for CREATE SCHEMA
 
         Returns:
             Complete SQL script with all bulk INSERT statements
@@ -139,6 +156,20 @@ class SQLGenerator:
         )
 
         sql_statements = []
+
+        # Add DDL if requested
+        if create_schema and database_name:
+            ddl_generator = DDLGenerator(self.introspector)
+
+            # Collect unique tables from records
+            unique_tables = {
+                (record.identifier.schema_name, record.identifier.table_name)
+                for record in records
+            }
+
+            ddl = ddl_generator.generate_ddl(database_name, schema_name, unique_tables)
+            sql_statements.append(ddl)
+            sql_statements.append("")  # Blank line separator
 
         # Add header
         header = [
@@ -446,7 +477,12 @@ class SQLGenerator:
     # ============================================================================
 
     def _generate_batch_with_plpgsql_remapping(
-        self, records: list[RecordData], include_transaction: bool
+        self,
+        records: list[RecordData],
+        include_transaction: bool,
+        create_schema: bool = False,
+        database_name: str | None = None,
+        schema_name: str = "public",
     ) -> str:
         """
         Generate PL/pgSQL script with ID remapping for auto-generated PKs.
@@ -462,12 +498,35 @@ class SQLGenerator:
            - Replace FK values with subqueries to lookup mapped IDs
         6. Drop temp table
 
+        Args:
+            records: List of RecordData in dependency order
+            include_transaction: Whether to wrap in BEGIN/COMMIT (always True for PL/pgSQL)
+            create_schema: If True, include DDL statements
+            database_name: Database name for CREATE DATABASE (required if create_schema=True)
+            schema_name: Schema name for CREATE SCHEMA
+
         Returns:
             PL/pgSQL script as string
         """
         from collections import defaultdict
 
         logger.info(f"Generating PL/pgSQL with ID remapping for {len(records)} records")
+
+        sql_statements = []
+
+        # Add DDL if requested
+        if create_schema and database_name:
+            ddl_generator = DDLGenerator(self.introspector)
+
+            # Collect unique tables from records
+            unique_tables = {
+                (record.identifier.schema_name, record.identifier.table_name)
+                for record in records
+            }
+
+            ddl = ddl_generator.generate_ddl(database_name, schema_name, unique_tables)
+            sql_statements.append(ddl)
+            sql_statements.append("")  # Blank line separator
 
         # 1. Deduplicate records (same as duplicate bug fix)
         seen_identifiers: set[RecordIdentifier] = set()
@@ -617,7 +676,14 @@ class SQLGenerator:
             ]
         )
 
-        result = "\n".join(sql_parts)
+        # Combine DDL (if any) with PL/pgSQL script
+        if sql_statements:
+            # sql_statements contains DDL, add PL/pgSQL parts after
+            sql_statements.extend(sql_parts)
+            result = "\n".join(sql_statements)
+        else:
+            result = "\n".join(sql_parts)
+
         logger.info(f"Generated PL/pgSQL script ({len(result)} bytes)")
         return result
 

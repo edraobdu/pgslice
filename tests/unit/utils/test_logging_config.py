@@ -44,11 +44,12 @@ class TestSetupLogging:
         root = logging.getLogger()
         assert root.level == logging.ERROR
 
-    def test_default_level_is_info(self) -> None:
-        """Default log level should be INFO."""
-        setup_logging()
-        root = logging.getLogger()
-        assert root.level == logging.INFO
+    def test_default_disables_logging(self) -> None:
+        """Default (None) should disable logging entirely."""
+        setup_logging()  # None = disabled
+        # When disabled, logging.disable(CRITICAL) is called
+        # Check that log messages are suppressed
+        assert logging.root.manager.disable >= logging.CRITICAL
 
     def test_level_case_insensitive(self) -> None:
         """Log level should be case insensitive."""
@@ -68,7 +69,7 @@ class TestSetupLogging:
         assert root.level == logging.INFO
 
     def test_adds_console_handler(self) -> None:
-        """Should add a console handler to stdout."""
+        """Should add a console handler to stderr."""
         setup_logging("INFO")
         root = logging.getLogger()
 
@@ -76,9 +77,9 @@ class TestSetupLogging:
         assert len(root.handlers) == 1
         handler = root.handlers[0]
 
-        # Should be a StreamHandler
+        # Should be a StreamHandler to stderr (not stdout, to avoid mixing with SQL output)
         assert isinstance(handler, logging.StreamHandler)
-        assert handler.stream == sys.stdout
+        assert handler.stream == sys.stderr
 
     def test_handler_has_correct_level(self) -> None:
         """Handler should have the same level as configured."""
@@ -206,9 +207,10 @@ class TestLoggingIntegration:
         logger.warning("Warning message")
 
         captured = capsys.readouterr()
-        assert "Debug message" not in captured.out
-        assert "Info message" not in captured.out
-        assert "Warning message" in captured.out
+        # Logs go to stderr now (not stdout) to avoid mixing with SQL output
+        assert "Debug message" not in captured.err
+        assert "Info message" not in captured.err
+        assert "Warning message" in captured.err
 
     def test_log_format_includes_timestamp(
         self, caplog: pytest.LogCaptureFixture

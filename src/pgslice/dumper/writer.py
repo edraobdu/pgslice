@@ -111,7 +111,13 @@ class SQLWriter:
         """
         Write SQL content to stdout.
 
+        Uses sys.stdout directly to avoid print() buffering issues.
+        Ensures proper encoding for piping.
+
         Args:
             sql_content: SQL script content
         """
-        logger.debug("Writing SQL to stdout")
+        import sys
+
+        sys.stdout.write(sql_content)
+        sys.stdout.flush()

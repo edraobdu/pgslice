@@ -4,16 +4,248 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
+from datetime import datetime
 from importlib.metadata import version as get_version
 
-from .config import load_config
+from printy import printy
+
+from .config import AppConfig, load_config
 from .db.connection import ConnectionManager
+from .db.schema import SchemaIntrospector
+from .dumper.dump_service import DumpService
+from .dumper.writer import SQLWriter
+from .operations import (
+    describe_table,
+    list_tables,
+    parse_truncate_filters,
+    print_tables,
+)
 from .repl import REPL
-from .utils.exceptions import DBReverseDumpError
+from .utils.exceptions import DBReverseDumpError, InvalidTimeframeError
 from .utils.logging_config import get_logger, setup_logging
 from .utils.security import SecureCredentials
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class MainTableTimeframe:
+    """Timeframe filter for the main table."""
+
+    column_name: str
+    start_date: datetime
+    end_date: datetime
+
+
+def parse_main_timeframe(spec: str) -> MainTableTimeframe:
+    """
+    Parse main table timeframe specification.
+
+    Format: column:start_date:end_date
+    Example: created_at:2024-01-01:2024-12-31
+
+    Args:
+        spec: Timeframe specification string
+
+    Returns:
+        MainTableTimeframe object
+
+    Raises:
+        InvalidTimeframeError: If specification is invalid
+    """
+    parts = spec.split(":")
+    if len(parts) != 3:
+        raise InvalidTimeframeError(
+            f"Invalid timeframe format: {spec}. "
+            "Expected: column:start:end (e.g., created_at:2024-01-01:2024-12-31)"
+        )
+
+    column_name, start_str, end_str = parts
+
+    try:
+        start_date = datetime.fromisoformat(start_str)
+    except ValueError as e:
+        raise InvalidTimeframeError(f"Invalid start date: {start_str}") from e
+
+    try:
+        end_date = datetime.fromisoformat(end_str)
+    except ValueError as e:
+        raise InvalidTimeframeError(f"Invalid end date: {end_str}") from e
+
+    return MainTableTimeframe(
+        column_name=column_name,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+def fetch_pks_by_timeframe(
+    conn_manager: ConnectionManager,
+    table: str,
+    schema: str,
+    timeframe: MainTableTimeframe,
+) -> list[str]:
+    """
+    Fetch primary key values matching the timeframe filter.
+
+    Args:
+        conn_manager: Database connection manager
+        table: Table name
+        schema: Schema name
+        timeframe: Timeframe filter
+
+    Returns:
+        List of primary key values as strings
+    """
+    printy("[y]Warning: Fetching records by timeframe may be slow for large tables@")
+
+    conn = conn_manager.get_connection()
+    introspector = SchemaIntrospector(conn)
+    table_meta = introspector.get_table_metadata(schema, table)
+
+    if not table_meta.primary_keys:
+        raise DBReverseDumpError(f"Table {schema}.{table} has no primary key")
+
+    # Use first primary key column for simplicity
+    pk_col = table_meta.primary_keys[0]
+
+    # Build and execute query
+    query = f'''
+        SELECT "{pk_col}"
+        FROM "{schema}"."{table}"
+        WHERE "{timeframe.column_name}" BETWEEN %s AND %s
+    '''
+
+    with conn.cursor() as cur:
+        cur.execute(query, (timeframe.start_date, timeframe.end_date))
+        rows = cur.fetchall()
+
+    pk_values = [str(row[0]) for row in rows]
+    printy(f"[c]Found {len(pk_values)} records matching timeframe@")
+    return pk_values
+
+
+def run_cli_dump(
+    args: argparse.Namespace,
+    config: AppConfig,
+    conn_manager: ConnectionManager,
+) -> int:
+    """
+    Execute dump in non-interactive CLI mode.
+
+    Args:
+        args: Parsed command line arguments
+        config: Application configuration
+        conn_manager: Database connection manager
+
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    # Parse truncate filters for related tables
+    try:
+        truncate_filters = parse_truncate_filters(args.truncate)
+    except InvalidTimeframeError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 1
+
+    # Determine PK values - either from --pks or --timeframe
+    if args.pks:
+        pk_values = [v.strip() for v in args.pks.split(",")]
+    elif args.timeframe:
+        try:
+            timeframe = parse_main_timeframe(args.timeframe)
+        except InvalidTimeframeError as e:
+            sys.stderr.write(f"Error: {e}\n")
+            return 1
+
+        pk_values = fetch_pks_by_timeframe(
+            conn_manager, args.table, args.schema, timeframe
+        )
+        if not pk_values:
+            printy("[y]No records found matching the timeframe@")
+            return 0
+    else:
+        # Should not reach here due to earlier validation
+        sys.stderr.write("Error: --pks or --timeframe is required\n")
+        return 1
+
+    # Show progress only if stderr is a TTY (not piped)
+    show_progress = sys.stderr.isatty()
+
+    # Wide mode warning
+    if args.wide and show_progress:
+        sys.stderr.write(
+            "\n⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.\n"
+        )
+        sys.stderr.write("   This may take longer and fetch more data.\n\n")
+        sys.stderr.flush()
+
+    # Create dump service
+    service = DumpService(conn_manager, config, show_progress=show_progress)
+
+    # Execute dump
+    result = service.dump(
+        table=args.table,
+        pk_values=pk_values,
+        schema=args.schema,
+        wide_mode=args.wide,
+        keep_pks=args.keep_pks,
+        create_schema=args.create_schema,
+        timeframe_filters=truncate_filters,
+        show_graph=args.graph,
+    )
+
+    # Output SQL
+    if args.output:
+        SQLWriter.write_to_file(result.sql_content, args.output)
+        printy(f"[g]Wrote {result.record_count} records to {args.output}@")
+    else:
+        SQLWriter.write_to_stdout(result.sql_content)
+
+    return 0
+
+
+def run_list_tables(conn_manager: ConnectionManager, schema: str) -> int:
+    """
+    List all tables in the specified schema.
+
+    Args:
+        conn_manager: Database connection manager
+        schema: Schema name
+
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    try:
+        tables = list_tables(conn_manager, schema)
+        print_tables(tables, schema)
+        return 0
+    except Exception as e:
+        printy(f"[r]Error: {e}@")
+        return 1
+
+
+def run_describe_table(
+    conn_manager: ConnectionManager, schema: str, table_name: str
+) -> int:
+    """
+    Describe table structure and relationships.
+
+    Args:
+        conn_manager: Database connection manager
+        schema: Schema name
+        table_name: Table name to describe
+
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    try:
+        describe_table(conn_manager, schema, table_name)
+        return 0
+    except Exception as e:
+        printy(f"[r]Error: {e}@")
+        return 1
 
 
 def main() -> int:
@@ -28,11 +260,23 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Start interactive REPL
-  %(prog)s --host localhost --port 5432 --user postgres --database mydb
+  # Dump to stdout
+  PGPASSWORD=xxx %(prog)s --host localhost --database mydb --table users --pks 42
 
-  # Require read-only connection
-  %(prog)s --host prod-db --require-read-only --database mydb
+  # Dump by timeframe (instead of PKs)
+  %(prog)s --host localhost --database mydb --table orders --timeframe "created_at:2024-01-01:2024-12-31"
+
+  # Dump to file with truncate filter for related tables
+  %(prog)s --table users --pks 1 --truncate "orders:created_at:2024-01-01:2024-12-31" --output user.sql
+
+  # List all tables
+  %(prog)s --host localhost --database mydb --tables
+
+  # Describe table structure
+  %(prog)s --host localhost --database mydb --describe users
+
+  # Interactive REPL
+  %(prog)s --host localhost --database mydb
 
   # Clear cache and exit
   %(prog)s --clear-cache
@@ -74,13 +318,77 @@ Examples:
         action="store_true",
         help="Clear schema cache and exit",
     )
+    parser.add_argument(
+        "--create-schema",
+        action="store_true",
+        help="Include DDL statements (CREATE DATABASE/SCHEMA/TABLE) in SQL dumps",
+    )
+
+    # Schema information arguments
+    info_group = parser.add_argument_group("Schema Information")
+    info_group.add_argument(
+        "--tables",
+        action="store_true",
+        help="List all tables in the schema",
+    )
+    info_group.add_argument(
+        "--describe",
+        metavar="TABLE",
+        help="Show table structure and relationships",
+    )
+
+    # Dump operation arguments (non-interactive CLI mode)
+    dump_group = parser.add_argument_group("Dump Operation (CLI mode)")
+    dump_group.add_argument(
+        "--table",
+        help="Table name to dump (enables non-interactive CLI mode)",
+    )
+
+    # --pks and --timeframe are mutually exclusive ways to select records
+    pk_source_group = dump_group.add_mutually_exclusive_group()
+    pk_source_group.add_argument(
+        "--pks",
+        help="Primary key value(s), comma-separated (e.g., '42' or '1,2,3')",
+    )
+    pk_source_group.add_argument(
+        "--timeframe",
+        metavar="COLUMN:START:END",
+        help="Filter main table by timeframe (e.g., 'created_at:2024-01-01:2024-12-31'). "
+        "Mutually exclusive with --pks.",
+    )
+
+    dump_group.add_argument(
+        "--wide",
+        action="store_true",
+        help="Wide mode: follow all relationships including self-referencing FKs",
+    )
+    dump_group.add_argument(
+        "--keep-pks",
+        action="store_true",
+        help="Keep original primary key values (default: remap auto-generated PKs)",
+    )
+    dump_group.add_argument(
+        "--graph",
+        action="store_true",
+        help="Display table relationship graph after dump completes",
+    )
+    dump_group.add_argument(
+        "--truncate",
+        action="append",
+        help="Truncate filter for related tables (format: table:column:start:end). Can be repeated.",
+    )
+    dump_group.add_argument(
+        "--output",
+        "-o",
+        help="Output file path (default: stdout)",
+    )
 
     # Other arguments
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Log level (default: INFO)",
+        default=None,
+        help="Log level (default: disabled unless specified)",
     )
     # Get version dynamically from package metadata
     try:
@@ -117,8 +425,18 @@ Examples:
             config.db.schema = args.schema
         if args.no_cache:
             config.cache.enabled = False
+        if args.create_schema:
+            config.create_schema = True
 
-        config.log_level = args.log_level
+        if args.log_level:
+            config.log_level = args.log_level
+
+        # Validate CLI dump mode arguments
+        if args.table and not args.pks and not args.timeframe:
+            sys.stderr.write(
+                "Error: --pks or --timeframe is required when using --table\n"
+            )
+            return 1
 
         # Clear cache if requested
         if args.clear_cache:
@@ -130,7 +448,7 @@ Examples:
                     config.cache.ttl_hours,
                 )
                 # Clear all caches (we don't have specific db info)
-                logger.info("Cache cleared")
+                printy("[g]Cache cleared successfully@")
             else:
                 pass
             return 0
@@ -151,23 +469,34 @@ Examples:
         )
 
         # Test connection
-        logger.info("Testing database connection...")
         try:
             conn_manager.get_connection()
         except Exception as e:
             logger.error(f"Connection failed: {e}")
             raise
 
-        # Start REPL
+        # Route: Schema info, CLI dump mode, or REPL mode
         try:
-            repl = REPL(conn_manager, config)
-            repl.start()
+            # Handle --tables
+            if args.tables:
+                return run_list_tables(conn_manager, args.schema)
+
+            # Handle --describe
+            if args.describe:
+                return run_describe_table(conn_manager, args.schema, args.describe)
+
+            if args.table:
+                # Non-interactive CLI dump mode
+                return run_cli_dump(args, config, conn_manager)
+            else:
+                # Interactive REPL mode
+                repl = REPL(conn_manager, config)
+                repl.start()
+                return 0
         finally:
             # Clean up
             conn_manager.close()
             credentials.clear()
-
-        return 0
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

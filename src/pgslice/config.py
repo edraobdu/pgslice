@@ -45,6 +45,7 @@ class AppConfig:
     log_level: str = "INFO"
     sql_batch_size: int = 100
     output_dir: Path = Path.home() / ".pgslice" / "dumps"
+    create_schema: bool = False
 
 
 def load_config() -> AppConfig:
