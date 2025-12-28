@@ -37,7 +37,7 @@ class TestGenerateDDL(TestDDLGenerator):
     def test_generate_database_statement(
         self, generator: DDLGenerator, mock_introspector: MagicMock
     ) -> None:
-        """Should generate CREATE DATABASE IF NOT EXISTS statement."""
+        """Should generate commented CREATE DATABASE statement."""
         # Mock table metadata
         mock_introspector.get_table_metadata.return_value = Table(
             schema_name="public",
@@ -58,7 +58,8 @@ class TestGenerateDDL(TestDDLGenerator):
         )
 
         result = generator.generate_ddl("mydb", "public", {("public", "users")})
-        assert 'CREATE DATABASE IF NOT EXISTS "mydb";' in result
+        # CREATE DATABASE should be commented out by default (PostgreSQL doesn't support IF NOT EXISTS)
+        assert '-- CREATE DATABASE "mydb";' in result
 
     def test_generate_schema_statement(
         self, generator: DDLGenerator, mock_introspector: MagicMock
@@ -669,7 +670,7 @@ class TestIntegration(TestDDLGenerator):
         )
 
         # Should contain all parts
-        assert 'CREATE DATABASE IF NOT EXISTS "testdb"' in result
+        assert '-- CREATE DATABASE "testdb";' in result
         assert 'CREATE SCHEMA IF NOT EXISTS "public"' in result
         assert 'CREATE TABLE IF NOT EXISTS "public"."users"' in result
         assert 'CREATE TABLE IF NOT EXISTS "public"."orders"' in result

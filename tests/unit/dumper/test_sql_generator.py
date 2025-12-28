@@ -1804,7 +1804,7 @@ class TestCreateSchemaIntegration(TestSQLGenerator):
         )
 
         # Verify DDL statements are present
-        assert 'CREATE DATABASE IF NOT EXISTS "testdb"' in sql
+        assert '-- CREATE DATABASE "testdb";' in sql
         assert 'CREATE SCHEMA IF NOT EXISTS "public"' in sql
         assert 'CREATE TABLE IF NOT EXISTS "public"."users"' in sql
 
@@ -1839,7 +1839,7 @@ class TestCreateSchemaIntegration(TestSQLGenerator):
         )
 
         # Verify DDL statements are present
-        assert 'CREATE DATABASE IF NOT EXISTS "testdb"' in sql
+        assert '-- CREATE DATABASE "testdb";' in sql
         assert 'CREATE SCHEMA IF NOT EXISTS "public"' in sql
         assert 'CREATE TABLE IF NOT EXISTS "public"."users"' in sql
 

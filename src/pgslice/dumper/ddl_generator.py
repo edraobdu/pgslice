@@ -47,7 +47,8 @@ class DDLGenerator:
             >>> generator = DDLGenerator(introspector)
             >>> ddl = generator.generate_ddl("mydb", "public", {("public", "users")})
             >>> print(ddl)
-            CREATE DATABASE IF NOT EXISTS "mydb";
+            -- CREATE DATABASE "mydb";
+            \\c "mydb"
             CREATE SCHEMA IF NOT EXISTS "public";
             ...
         """
@@ -64,13 +65,24 @@ class DDLGenerator:
         # 1. CREATE DATABASE
         quoted_db = self._quote_identifier(database_name)
         statements.append(
-            f"-- NOTE: CREATE DATABASE cannot run within a transaction.\n"
-            f"-- If importing to an existing database, comment out this line.\n"
-            f"CREATE DATABASE IF NOT EXISTS {quoted_db};"
+            f"-- NOTE: PostgreSQL does not support 'CREATE DATABASE IF NOT EXISTS'.\n"
+            f"-- If the database already exists, comment out the line below or it will fail.\n"
+            f"-- For a new database: Uncomment the following line\n"
+            f"-- CREATE DATABASE {quoted_db};"
         )
         statements.append("")  # Blank line
 
-        # 2. CREATE SCHEMA(S)
+        # 2. CONNECT TO DATABASE
+        # Add connection command (psql-specific)
+        statements.append(
+            f"-- Connect to the database before creating schemas/tables.\n"
+            f"-- For psql: Use the \\c command below\n"
+            f"-- For other clients: Disconnect and reconnect to the database manually\n"
+            f"\\c {quoted_db}"
+        )
+        statements.append("")  # Blank line
+
+        # 3. CREATE SCHEMA(S)
         # Collect unique schemas from tables
         unique_schemas = {schema for schema, _ in tables}
         for schema in sorted(unique_schemas):
@@ -78,7 +90,7 @@ class DDLGenerator:
             statements.append(f"CREATE SCHEMA IF NOT EXISTS {quoted_schema};")
         statements.append("")  # Blank line
 
-        # 3. CREATE TABLES (sorted by dependencies)
+        # 4. CREATE TABLES (sorted by dependencies)
         sorted_tables = self._sort_tables_by_dependencies(tables)
 
         table_statements = []
