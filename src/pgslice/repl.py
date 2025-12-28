@@ -60,18 +60,7 @@ class REPL:
         }
 
     def start(self) -> None:
-        """Start the REPL with deprecation warning."""
-        # Show deprecation warning
-        printy("\n[y]" + "=" * 70 + "@")
-        printy("[y]WARNING: The interactive REPL is deprecated and will be removed@")
-        printy("[y]in a future version.@")
-        printy("[y]@")
-        printy("[y]Use CLI flags instead:@")
-        printy("[y]  pgslice --table users --pks 1,2,3 > output.sql@")
-        printy("[y]@")
-        printy("[y]See 'pgslice --help' for all available options.@")
-        printy("[y]" + "=" * 70 + "@\n")
-
+        """Start the interactive REPL."""
         # Create prompt session with history
         history_file = Path.home() / ".pgslice_history"
         self.session = PromptSession(
@@ -119,14 +108,16 @@ class REPL:
         """
         Execute dump command.
 
-        Format: dump "table_name" pk_value[,pk_value,...] [--output file.sql] [--schema schema_name] [--timeframe "table:col:start:end"] [--wide]
+        Format: dump "table_name" pk_value[,pk_value,...] [--output file.sql] [--schema schema_name] [--truncate "table:col:start:end"] [--wide]
         """
         if len(args) < 2:
             printy('[y]Usage: dump "table_name" pk_value [options]@')
             printy("\nOptions:")
             printy("  --output FILE         Output file path")
             printy("  --schema SCHEMA       Schema name (default: public)")
-            printy("  --timeframe SPEC      Timeframe filter (table:column:start:end)")
+            printy(
+                "  --truncate SPEC       Truncate filter for related tables (table:column:start:end)"
+            )
             printy(
                 "  --wide                Wide mode: follow all relationships (default: strict)"
             )
@@ -160,7 +151,7 @@ class REPL:
             elif args[i] == "--schema" and i + 1 < len(args):
                 schema = args[i + 1]
                 i += 2
-            elif args[i] == "--timeframe" and i + 1 < len(args):
+            elif args[i] == "--truncate" and i + 1 < len(args):
                 timeframe_specs.append(args[i + 1])
                 i += 2
             elif args[i] == "--wide":
@@ -182,7 +173,7 @@ class REPL:
                 tf = self._parse_timeframe(spec)
                 timeframe_filters.append(tf)
             except InvalidTimeframeError as e:
-                printy(f"[r]Invalid timeframe: {e}@")
+                printy(f"[r]Invalid truncate filter: {e}@")
                 return
 
         # Execute dump
@@ -193,7 +184,7 @@ class REPL:
         )
 
         if timeframe_filters:
-            printy("\n[y]Timeframe filters:@")
+            printy("\n[y]Truncate filters:@")
             for tf in timeframe_filters:
                 printy(f"  - {tf}")
 
@@ -243,7 +234,7 @@ class REPL:
         help_data = [
             [
                 "dump TABLE PK [options]",
-                "Extract a record and all related records\nOptions: --output FILE, --schema SCHEMA, --timeframe SPEC",
+                "Extract a record and all related records\nOptions: --output FILE, --schema SCHEMA, --truncate SPEC",
             ],
             ["tables [--schema SCHEMA]", "List all tables in the database"],
             ["describe TABLE [--schema]", "Show table structure and relationships"],
@@ -264,7 +255,7 @@ class REPL:
         printy("\n[y]Examples:@")
         print('  dump "users" 42 --output user_42.sql')
         print('  dump "users" 42,123,456 --output users.sql')
-        print('  dump "users" 42 --timeframe "orders:created_at:2024-01-01:2024-12-31"')
+        print('  dump "users" 42 --truncate "orders:created_at:2024-01-01:2024-12-31"')
         print("  tables")
         print('  describe "users"')
         print()

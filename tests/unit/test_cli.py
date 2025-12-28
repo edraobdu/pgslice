@@ -9,7 +9,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from pgslice.cli import main, parse_timeframe, parse_timeframes
+from pgslice.cli import (
+    MainTableTimeframe,
+    main,
+    parse_main_timeframe,
+    parse_truncate_filter,
+    parse_truncate_filters,
+    run_describe_table,
+    run_list_tables,
+)
 from pgslice.utils.exceptions import InvalidTimeframeError
 
 
@@ -295,12 +303,12 @@ class TestMain:
                         assert exit_code == 0
 
 
-class TestParseTimeframe:
-    """Tests for parse_timeframe function."""
+class TestParseTruncateFilter:
+    """Tests for parse_truncate_filter function."""
 
     def test_parses_four_part_format(self) -> None:
         """Should parse table:column:start:end format."""
-        result = parse_timeframe("orders:created_at:2024-01-01:2024-12-31")
+        result = parse_truncate_filter("orders:created_at:2024-01-01:2024-12-31")
 
         assert result.table_name == "orders"
         assert result.column_name == "created_at"
@@ -309,7 +317,7 @@ class TestParseTimeframe:
 
     def test_parses_three_part_format(self) -> None:
         """Should parse table:start:end format with default column."""
-        result = parse_timeframe("orders:2024-01-01:2024-12-31")
+        result = parse_truncate_filter("orders:2024-01-01:2024-12-31")
 
         assert result.table_name == "orders"
         assert result.column_name == "created_at"
@@ -318,43 +326,43 @@ class TestParseTimeframe:
 
     def test_raises_for_invalid_format(self) -> None:
         """Should raise for invalid format."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid timeframe format"):
-            parse_timeframe("orders")
+        with pytest.raises(InvalidTimeframeError, match="Invalid truncate filter"):
+            parse_truncate_filter("orders")
 
-        with pytest.raises(InvalidTimeframeError, match="Invalid timeframe format"):
-            parse_timeframe("a:b:c:d:e")
+        with pytest.raises(InvalidTimeframeError, match="Invalid truncate filter"):
+            parse_truncate_filter("a:b:c:d:e")
 
     def test_raises_for_invalid_start_date(self) -> None:
         """Should raise for invalid start date."""
         with pytest.raises(InvalidTimeframeError, match="Invalid start date"):
-            parse_timeframe("orders:invalid:2024-12-31")
+            parse_truncate_filter("orders:invalid:2024-12-31")
 
     def test_raises_for_invalid_end_date(self) -> None:
         """Should raise for invalid end date."""
         with pytest.raises(InvalidTimeframeError, match="Invalid end date"):
-            parse_timeframe("orders:2024-01-01:invalid")
+            parse_truncate_filter("orders:2024-01-01:invalid")
 
 
-class TestParseTimeframes:
-    """Tests for parse_timeframes function."""
+class TestParseTruncateFilters:
+    """Tests for parse_truncate_filters function."""
 
     def test_returns_empty_for_none(self) -> None:
         """Should return empty list for None."""
-        assert parse_timeframes(None) == []
+        assert parse_truncate_filters(None) == []
 
     def test_returns_empty_for_empty_list(self) -> None:
         """Should return empty list for empty list."""
-        assert parse_timeframes([]) == []
+        assert parse_truncate_filters([]) == []
 
-    def test_parses_single_timeframe(self) -> None:
-        """Should parse single timeframe."""
-        result = parse_timeframes(["orders:2024-01-01:2024-12-31"])
+    def test_parses_single_filter(self) -> None:
+        """Should parse single truncate filter."""
+        result = parse_truncate_filters(["orders:2024-01-01:2024-12-31"])
         assert len(result) == 1
         assert result[0].table_name == "orders"
 
-    def test_parses_multiple_timeframes(self) -> None:
-        """Should parse multiple timeframes."""
-        result = parse_timeframes(
+    def test_parses_multiple_filters(self) -> None:
+        """Should parse multiple truncate filters."""
+        result = parse_truncate_filters(
             [
                 "orders:2024-01-01:2024-12-31",
                 "users:created_at:2024-06-01:2024-06-30",
@@ -368,8 +376,10 @@ class TestParseTimeframes:
 class TestCLIDumpMode:
     """Tests for CLI dump mode (non-interactive)."""
 
-    def test_table_without_pks_fails(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """Should fail when --table is provided without --pks."""
+    def test_table_without_pks_or_timeframe_fails(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Should fail when --table is provided without --pks or --timeframe."""
         with (
             patch.object(
                 sys,
@@ -398,7 +408,7 @@ class TestCLIDumpMode:
             assert exit_code == 1
 
             captured = capsys.readouterr()
-            assert "--pks is required" in captured.err
+            assert "--pks or --timeframe is required" in captured.err
 
     def test_cli_dump_mode_executes(self) -> None:
         """Should execute dump in CLI mode when --table and --pks are provided."""
@@ -556,7 +566,7 @@ class TestCLIDumpMode:
                     "--wide",
                     "--keep-pks",
                     "--create-schema",
-                    "--timeframe",
+                    "--truncate",
                     "orders:2024-01-01:2024-12-31",
                 ],
             ),
@@ -614,3 +624,345 @@ class TestLoggingDefault:
 
             # setup_logging should be called with None (disabled)
             mock_setup.assert_called_with(None)
+
+
+class TestParseMainTimeframe:
+    """Tests for parse_main_timeframe function."""
+
+    def test_parses_valid_format(self) -> None:
+        """Should parse column:start:end format."""
+        result = parse_main_timeframe("created_at:2024-01-01:2024-12-31")
+
+        assert isinstance(result, MainTableTimeframe)
+        assert result.column_name == "created_at"
+        assert result.start_date == datetime(2024, 1, 1)
+        assert result.end_date == datetime(2024, 12, 31)
+
+    def test_raises_for_invalid_format(self) -> None:
+        """Should raise for invalid format."""
+        with pytest.raises(InvalidTimeframeError, match="Invalid timeframe format"):
+            parse_main_timeframe("just_column")
+
+        with pytest.raises(InvalidTimeframeError, match="Invalid timeframe format"):
+            parse_main_timeframe("a:b:c:d")
+
+    def test_raises_for_invalid_start_date(self) -> None:
+        """Should raise for invalid start date."""
+        with pytest.raises(InvalidTimeframeError, match="Invalid start date"):
+            parse_main_timeframe("created_at:invalid:2024-12-31")
+
+    def test_raises_for_invalid_end_date(self) -> None:
+        """Should raise for invalid end date."""
+        with pytest.raises(InvalidTimeframeError, match="Invalid end date"):
+            parse_main_timeframe("created_at:2024-01-01:invalid")
+
+
+class TestMainTableTimeframeCLI:
+    """Tests for main table timeframe CLI functionality."""
+
+    def test_mutual_exclusion_with_pks(self) -> None:
+        """Should not allow both --pks and --timeframe."""
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "pgslice",
+                    "--table",
+                    "users",
+                    "--pks",
+                    "1",
+                    "--timeframe",
+                    "created_at:2024-01-01:2024-12-31",
+                ],
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            main()
+        # argparse exits with 2 for argument errors
+        assert exc_info.value.code == 2
+
+    def test_timeframe_mode_executes(self) -> None:
+        """Should execute dump with timeframe mode."""
+        from pgslice.dumper.dump_service import DumpResult
+
+        mock_result = DumpResult(
+            sql_content="INSERT INTO users VALUES (1);",
+            record_count=1,
+            tables_involved={"users"},
+        )
+
+        mock_table_meta = MagicMock()
+        mock_table_meta.primary_keys = ["id"]
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "pgslice",
+                    "--host",
+                    "localhost",
+                    "--user",
+                    "test",
+                    "--database",
+                    "test",
+                    "--table",
+                    "users",
+                    "--timeframe",
+                    "created_at:2024-01-01:2024-12-31",
+                ],
+            ),
+            patch("pgslice.cli.load_config") as mock_load,
+            patch("pgslice.cli.SecureCredentials"),
+            patch("pgslice.cli.ConnectionManager") as mock_cm,
+            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
+            patch("pgslice.cli.DumpService") as mock_dump_service,
+            patch("pgslice.cli.SQLWriter"),
+            patch("pgslice.cli.printy"),
+        ):
+            mock_config = MagicMock()
+            mock_config.db.host = "localhost"
+            mock_config.db.user = "test"
+            mock_config.db.database = "test"
+            mock_config.db.port = 5432
+            mock_config.db.schema = "public"
+            mock_config.cache.enabled = False
+            mock_config.connection_ttl_minutes = 30
+            mock_config.create_schema = False
+            mock_load.return_value = mock_config
+
+            mock_cm_instance = MagicMock()
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_cursor.fetchall.return_value = [(1,), (2,), (3,)]
+            mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+            mock_cm_instance.get_connection.return_value = mock_conn
+            mock_cm.return_value = mock_cm_instance
+
+            mock_introspector_instance = MagicMock()
+            mock_introspector_instance.get_table_metadata.return_value = mock_table_meta
+            mock_introspector.return_value = mock_introspector_instance
+
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.return_value = mock_result
+            mock_dump_service.return_value = mock_service_instance
+
+            exit_code = main()
+            assert exit_code == 0
+
+            # DumpService.dump should have been called with PKs from timeframe query
+            mock_service_instance.dump.assert_called_once()
+            call_kwargs = mock_service_instance.dump.call_args[1]
+            assert call_kwargs["pk_values"] == ["1", "2", "3"]
+
+    def test_timeframe_mode_empty_result(self) -> None:
+        """Should handle empty result from timeframe query."""
+        mock_table_meta = MagicMock()
+        mock_table_meta.primary_keys = ["id"]
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "pgslice",
+                    "--host",
+                    "localhost",
+                    "--user",
+                    "test",
+                    "--database",
+                    "test",
+                    "--table",
+                    "users",
+                    "--timeframe",
+                    "created_at:2024-01-01:2024-12-31",
+                ],
+            ),
+            patch("pgslice.cli.load_config") as mock_load,
+            patch("pgslice.cli.SecureCredentials"),
+            patch("pgslice.cli.ConnectionManager") as mock_cm,
+            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
+            patch("pgslice.cli.printy") as mock_printy,
+        ):
+            mock_config = MagicMock()
+            mock_config.db.host = "localhost"
+            mock_config.db.user = "test"
+            mock_config.db.database = "test"
+            mock_config.db.port = 5432
+            mock_config.db.schema = "public"
+            mock_config.cache.enabled = False
+            mock_config.connection_ttl_minutes = 30
+            mock_config.create_schema = False
+            mock_load.return_value = mock_config
+
+            mock_cm_instance = MagicMock()
+            mock_conn = MagicMock()
+            mock_cursor = MagicMock()
+            mock_cursor.fetchall.return_value = []  # Empty result
+            mock_conn.cursor.return_value.__enter__.return_value = mock_cursor
+            mock_cm_instance.get_connection.return_value = mock_conn
+            mock_cm.return_value = mock_cm_instance
+
+            mock_introspector_instance = MagicMock()
+            mock_introspector_instance.get_table_metadata.return_value = mock_table_meta
+            mock_introspector.return_value = mock_introspector_instance
+
+            exit_code = main()
+            assert exit_code == 0
+
+            # Should print warning about no records found
+            mock_printy.assert_any_call("[y]No records found matching the timeframe@")
+
+
+class TestSchemaInfoFlags:
+    """Tests for --tables and --describe CLI flags."""
+
+    def test_tables_flag_lists_tables(self) -> None:
+        """Should list tables when --tables is used."""
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "pgslice",
+                    "--host",
+                    "localhost",
+                    "--user",
+                    "test",
+                    "--database",
+                    "test",
+                    "--tables",
+                ],
+            ),
+            patch("pgslice.cli.load_config") as mock_load,
+            patch("pgslice.cli.SecureCredentials"),
+            patch("pgslice.cli.ConnectionManager") as mock_cm,
+            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
+            patch("pgslice.cli.printy") as mock_printy,
+        ):
+            mock_config = MagicMock()
+            mock_config.db.host = "localhost"
+            mock_config.db.user = "test"
+            mock_config.db.database = "test"
+            mock_config.db.port = 5432
+            mock_config.db.schema = "public"
+            mock_config.cache.enabled = False
+            mock_config.connection_ttl_minutes = 30
+            mock_load.return_value = mock_config
+
+            mock_cm_instance = MagicMock()
+            mock_cm.return_value = mock_cm_instance
+
+            mock_introspector_instance = MagicMock()
+            mock_introspector_instance.get_all_tables.return_value = [
+                "users",
+                "orders",
+                "products",
+            ]
+            mock_introspector.return_value = mock_introspector_instance
+
+            exit_code = main()
+            assert exit_code == 0
+
+            # Should print each table and total
+            mock_printy.assert_any_call("  users")
+            mock_printy.assert_any_call("  orders")
+            mock_printy.assert_any_call("  products")
+
+    def test_describe_flag_shows_table_info(self) -> None:
+        """Should describe table when --describe is used."""
+        mock_table = MagicMock()
+        mock_table.full_name = "public.users"
+        mock_table.columns = []
+        mock_table.primary_keys = ["id"]
+        mock_table.foreign_keys_outgoing = []
+        mock_table.foreign_keys_incoming = []
+
+        with (
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "pgslice",
+                    "--host",
+                    "localhost",
+                    "--user",
+                    "test",
+                    "--database",
+                    "test",
+                    "--describe",
+                    "users",
+                ],
+            ),
+            patch("pgslice.cli.load_config") as mock_load,
+            patch("pgslice.cli.SecureCredentials"),
+            patch("pgslice.cli.ConnectionManager") as mock_cm,
+            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
+            patch("pgslice.cli.printy") as mock_printy,
+            patch("pgslice.cli.tabulate", return_value="COLUMNS TABLE"),
+        ):
+            mock_config = MagicMock()
+            mock_config.db.host = "localhost"
+            mock_config.db.user = "test"
+            mock_config.db.database = "test"
+            mock_config.db.port = 5432
+            mock_config.db.schema = "public"
+            mock_config.cache.enabled = False
+            mock_config.connection_ttl_minutes = 30
+            mock_load.return_value = mock_config
+
+            mock_cm_instance = MagicMock()
+            mock_cm.return_value = mock_cm_instance
+
+            mock_introspector_instance = MagicMock()
+            mock_introspector_instance.get_table_metadata.return_value = mock_table
+            mock_introspector.return_value = mock_introspector_instance
+
+            exit_code = main()
+            assert exit_code == 0
+
+            # Should print table name
+            mock_printy.assert_any_call("\n[c]Table: public.users@\n")
+
+    def test_run_list_tables_function(self) -> None:
+        """Should return tables from introspector."""
+        mock_conn_manager = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn_manager.get_connection.return_value = mock_conn
+
+        with (
+            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
+            patch("pgslice.cli.printy"),
+        ):
+            mock_introspector_instance = MagicMock()
+            mock_introspector_instance.get_all_tables.return_value = ["table1"]
+            mock_introspector.return_value = mock_introspector_instance
+
+            result = run_list_tables(mock_conn_manager, "public")
+            assert result == 0
+
+    def test_run_describe_table_function(self) -> None:
+        """Should return table metadata from introspector."""
+        mock_conn_manager = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn_manager.get_connection.return_value = mock_conn
+
+        mock_table = MagicMock()
+        mock_table.full_name = "public.users"
+        mock_table.columns = []
+        mock_table.primary_keys = []
+        mock_table.foreign_keys_outgoing = []
+        mock_table.foreign_keys_incoming = []
+
+        with (
+            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
+            patch("pgslice.cli.printy"),
+            patch("pgslice.cli.tabulate", return_value=""),
+        ):
+            mock_introspector_instance = MagicMock()
+            mock_introspector_instance.get_table_metadata.return_value = mock_table
+            mock_introspector.return_value = mock_introspector_instance
+
+            result = run_describe_table(mock_conn_manager, "public", "users")
+            assert result == 0

@@ -85,7 +85,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions
 
 ## Quick Start
 
-### CLI Mode (Recommended)
+### CLI Mode
 
 The CLI mode streams SQL to stdout by default, making it easy to pipe or redirect output:
 
@@ -99,6 +99,10 @@ PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 1,2,
 # Output directly to file with --output flag
 pgslice --host localhost --database mydb --table users --pks 42 --output user_42.sql
 
+# Dump by timeframe (instead of PKs) - filters main table by date range
+pgslice --host localhost --database mydb --table orders \
+    --timeframe "created_at:2024-01-01:2024-12-31" > orders_2024.sql
+
 # Wide mode: follow all relationships including self-referencing FKs
 # Be cautious - this can result in larger datasets
 pgslice --host localhost --database mydb --table customer --pks 42 --wide > customer.sql
@@ -110,13 +114,23 @@ pgslice --host localhost --database mydb --table film --pks 1 --keep-pks > film.
 # Includes CREATE DATABASE/SCHEMA/TABLE statements
 pgslice --host localhost --database mydb --table film --pks 1 --create-schema > film_complete.sql
 
-# Apply timeframe filter
+# Apply truncate filter to limit related tables by date range
 pgslice --host localhost --database mydb --table customer --pks 42 \
-    --timeframe "rental:rental_date:2024-01-01:2024-12-31" > customer.sql
+    --truncate "rental:rental_date:2024-01-01:2024-12-31" > customer.sql
 
 # Enable debug logging (writes to stderr)
 pgslice --host localhost --database mydb --table users --pks 42 \
     --log-level DEBUG 2>debug.log > output.sql
+```
+
+### Schema Exploration
+
+```bash
+# List all tables in the schema
+pgslice --host localhost --database mydb --tables
+
+# Describe table structure and relationships
+pgslice --host localhost --database mydb --describe users
 ```
 
 ### SSH Remote Execution
@@ -134,13 +148,10 @@ PGPASSWORD=xxx pgslice --host localhost --port 5433 --database mydb \
     --table users --pks 42 > user.sql
 ```
 
-### Interactive REPL (Deprecated)
-
-> **Note:** The interactive REPL is deprecated and will be removed in a future version.
-> Please use CLI flags instead as shown above.
+### Interactive REPL
 
 ```bash
-# Start REPL (shows deprecation warning)
+# Start interactive REPL
 pgslice --host localhost --database mydb
 
 pgslice> dump "film" 1 --output film_1.sql

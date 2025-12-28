@@ -440,10 +440,10 @@ class TestCmdDump(TestREPL):
             call_kwargs = mock_service_instance.dump.call_args[1]
             assert call_kwargs["wide_mode"] is True
 
-    def test_handles_timeframe_flag(
+    def test_handles_truncate_flag(
         self, repl: REPL, mock_connection_manager: MagicMock, tmp_path: Path
     ) -> None:
-        """Should handle --timeframe flag."""
+        """Should handle --truncate flag."""
         from pgslice.dumper.dump_service import DumpResult
 
         mock_result = DumpResult(
@@ -467,7 +467,7 @@ class TestCmdDump(TestREPL):
                 [
                     "users",
                     "42",
-                    "--timeframe",
+                    "--truncate",
                     "orders:created_at:2024-01-01:2024-12-31",
                 ]
             )
@@ -476,11 +476,11 @@ class TestCmdDump(TestREPL):
             call_kwargs = mock_service_instance.dump.call_args[1]
             assert len(call_kwargs["timeframe_filters"]) == 1
 
-    def test_handles_invalid_timeframe(self, repl: REPL) -> None:
-        """Should handle invalid timeframe."""
+    def test_handles_invalid_truncate(self, repl: REPL) -> None:
+        """Should handle invalid truncate filter."""
         with patch("pgslice.repl.printy"):
             # Invalid format - should not raise, just print error
-            repl._cmd_dump(["users", "42", "--timeframe", "invalid"])
+            repl._cmd_dump(["users", "42", "--truncate", "invalid"])
 
     def test_handles_dump_error(
         self, repl: REPL, mock_connection_manager: MagicMock
