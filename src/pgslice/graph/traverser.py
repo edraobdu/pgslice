@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable
 from typing import Any
 
 import psycopg
@@ -31,6 +32,7 @@ class RelationshipTraverser:
         visited_tracker: VisitedTracker,
         timeframe_filters: list[TimeframeFilter] | None = None,
         wide_mode: bool = False,
+        progress_callback: Callable[[int], None] | None = None,
     ) -> None:
         """
         Initialize relationship traverser.
@@ -43,6 +45,7 @@ class RelationshipTraverser:
             wide_mode: If True, follow incoming FKs from all records (wide/exploratory).
                       If False (default), only follow incoming FKs from starting records
                       and records reached via incoming FKs (strict mode, prevents fan-out).
+            progress_callback: Optional callback invoked with record count after each fetch
         """
         self.conn = connection
         self.introspector = schema_introspector
@@ -50,6 +53,7 @@ class RelationshipTraverser:
         self.table_cache: dict[str, Table] = {}
         self.timeframe_filters = {f.table_name: f for f in (timeframe_filters or [])}
         self.wide_mode = wide_mode
+        self.progress_callback = progress_callback
 
     def traverse(
         self,
@@ -120,6 +124,10 @@ class RelationshipTraverser:
             logger.debug(
                 f"Fetched {record_id} at depth {depth} ({len(results)} total records)"
             )
+
+            # Invoke progress callback with current record count
+            if self.progress_callback:
+                self.progress_callback(len(results))
 
             # Get table metadata
             table = self._get_table_metadata(
@@ -209,6 +217,10 @@ class RelationshipTraverser:
         for pk_value in pk_values:
             records = self.traverse(table_name, pk_value, schema, max_depth)
             all_records.update(records)
+
+        # Final progress callback with total unique records
+        if self.progress_callback:
+            self.progress_callback(len(all_records))
 
         logger.info(
             f"Multi-traversal complete: {len(all_records)} unique records found"

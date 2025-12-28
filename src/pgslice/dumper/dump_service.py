@@ -14,6 +14,7 @@ from ..graph.models import TimeframeFilter
 from ..graph.traverser import RelationshipTraverser
 from ..graph.visited_tracker import VisitedTracker
 from ..utils.logging_config import get_logger
+from ..utils.spinner import SpinnerAnimator
 from .dependency_sorter import DependencySorter
 from .sql_generator import SQLGenerator
 
@@ -86,12 +87,27 @@ class DumpService:
             bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}",
         ) as pbar:
             # Step 1: Setup and traverse relationships
-            pbar.set_description("Traversing relationships")
+            # Create spinner animator (updates every 100ms for smooth animation)
+            spinner = SpinnerAnimator(update_interval=0.1)
+
+            pbar.set_description(f"Traversing relationships {spinner.get_frame()}")
+
+            # Define progress callback to update progress bar with animated spinner
+            def update_progress(count: int) -> None:
+                pbar.set_description(
+                    f"Traversing relationships {spinner.get_frame()} {count} records found"
+                )
+
             conn = self.conn_manager.get_connection()
             introspector = SchemaIntrospector(conn)
             visited = VisitedTracker()
             traverser = RelationshipTraverser(
-                conn, introspector, visited, timeframe_filters, wide_mode=wide_mode
+                conn,
+                introspector,
+                visited,
+                timeframe_filters,
+                wide_mode=wide_mode,
+                progress_callback=update_progress,
             )
 
             if len(pk_values) == 1:
@@ -102,16 +118,20 @@ class DumpService:
                 records = traverser.traverse_multiple(
                     table, pk_values, schema, self.config.max_depth
                 )
+            pbar.set_description(
+                f"Traversing relationships ✓ {len(records)} records found"
+            )
             pbar.update(1)
 
             # Step 2: Sort by dependencies
-            pbar.set_description("Sorting dependencies")
+            pbar.set_description("Sorting dependencies ⠋")
             sorter = DependencySorter()
             sorted_records = sorter.sort(records)
+            pbar.set_description("Sorting dependencies ✓")
             pbar.update(1)
 
             # Step 3: Generate SQL
-            pbar.set_description("Generating SQL")
+            pbar.set_description("Generating SQL ⠋")
             generator = SQLGenerator(
                 introspector, batch_size=self.config.sql_batch_size
             )
@@ -122,10 +142,11 @@ class DumpService:
                 database_name=self.config.db.database,
                 schema_name=schema,
             )
+            pbar.set_description("Generating SQL ✓")
             pbar.update(1)
 
             # Step 4: Complete
-            pbar.set_description("Complete")
+            pbar.set_description("Complete ✓")
             pbar.update(1)
 
         # Collect tables involved
