@@ -32,13 +32,14 @@ Extract only what you need while maintaining referential integrity.
 
 ## Features
 
+- ✅ **CLI-first design**: Stream SQL to stdout for easy piping and scripting
 - ✅ **Bidirectional FK traversal**: Follows relationships in both directions (forward and reverse)
 - ✅ **Circular relationship handling**: Prevents infinite loops with visited tracking
 - ✅ **Multiple records**: Extract multiple records in one operation
 - ✅ **Timeframe filtering**: Filter specific tables by date ranges
 - ✅ **PK remapping**: Auto-remaps auto-generated primary keys for clean imports
 - ✅ **DDL generation**: Optionally include CREATE DATABASE/SCHEMA/TABLE statements for self-contained dumps
-- ✅ **Interactive REPL**: User-friendly command-line interface
+- ✅ **Progress bar**: Visual progress indicator for dump operations
 - ✅ **Schema caching**: SQLite-based caching for improved performance
 - ✅ **Type-safe**: Full type hints with mypy strict mode
 - ✅ **Secure**: SQL injection prevention, secure password handling
@@ -84,46 +85,67 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions
 
 ## Quick Start
 
+### CLI Mode (Recommended)
+
+The CLI mode streams SQL to stdout by default, making it easy to pipe or redirect output:
+
 ```bash
-# In REPL:
-# This will dump all related records to the film with id 1
-# The generated SQL file will be placed, by default, in ~/.pgslice/dumps
-# The name will be a formated string with table name, id, and timestamp
-pgslice> dump "film" 1
+# Basic dump to stdout (pipe to file)
+PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 42 > user_42.sql
 
-# You can overwrite the output path with:
-pgslice> dump "film" 1 --output film_1.sql
+# Multiple records
+PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 1,2,3 > users.sql
 
-# Extract multiple records
-pgslice> dump "actor" 1,2,3 --output multiple_actors.sql
+# Output directly to file with --output flag
+pgslice --host localhost --database mydb --table users --pks 42 --output user_42.sql
 
-# Use wide mode to follow all relationships (including self-referencing FKs)
-# Be cautions that this can result in larger datasets. So use with caution
-pgslice> dump "customer" 42 --wide --output customer_42.sql
+# Wide mode: follow all relationships including self-referencing FKs
+# Be cautious - this can result in larger datasets
+pgslice --host localhost --database mydb --table customer --pks 42 --wide > customer.sql
+
+# Keep original primary keys (no remapping)
+pgslice --host localhost --database mydb --table film --pks 1 --keep-pks > film.sql
+
+# Generate self-contained SQL with DDL statements
+# Includes CREATE DATABASE/SCHEMA/TABLE statements
+pgslice --host localhost --database mydb --table film --pks 1 --create-schema > film_complete.sql
 
 # Apply timeframe filter
-pgslice> dump "customer" 42 --timeframe "rental:rental_date:2024-01-01:2024-12-31"
+pgslice --host localhost --database mydb --table customer --pks 42 \
+    --timeframe "rental:rental_date:2024-01-01:2024-12-31" > customer.sql
 
-# List all tables
+# Enable debug logging (writes to stderr)
+pgslice --host localhost --database mydb --table users --pks 42 \
+    --log-level DEBUG 2>debug.log > output.sql
+```
+
+### SSH Remote Execution
+
+Run pgslice on a remote server and capture output locally:
+
+```bash
+# Execute on remote server, save output locally
+ssh remote.server.com "PGPASSWORD=xxx pgslice --host db.internal --database mydb \
+    --table users --pks 1 --create-schema" > local_dump.sql
+
+# With SSH tunnel for database access
+ssh -f -N -L 5433:db.internal:5432 bastion.example.com
+PGPASSWORD=xxx pgslice --host localhost --port 5433 --database mydb \
+    --table users --pks 42 > user.sql
+```
+
+### Interactive REPL (Deprecated)
+
+> **Note:** The interactive REPL is deprecated and will be removed in a future version.
+> Please use CLI flags instead as shown above.
+
+```bash
+# Start REPL (shows deprecation warning)
+pgslice --host localhost --database mydb
+
+pgslice> dump "film" 1 --output film_1.sql
 pgslice> tables
-
-# Show table structure and relationships
 pgslice> describe "film"
-
-# Keep original primary key values (no remapping)
-# By default, we will dinamically assign ids to the new generated records
-# and handle conflicts gracefully. Meaninh, you can run the same file multiple times
-# and no conflicts will arise.
-# If you want to keep the original id's run:
-pgslice> dump "film" 1 --keep-pks --output film_1.sql
-
-# Generate self-contained SQL with DDL statements (NEW in v0.2.0)
-# This creates a fully self-contained SQL file with:
-# - CREATE DATABASE IF NOT EXISTS
-# - CREATE SCHEMA IF NOT EXISTS
-# - CREATE TABLE IF NOT EXISTS for all tables
-# - All INSERT statements with data
-pgslice> dump "film" 1 --create-schema --output film_1_complete.sql
 ```
 
 ## Configuration
@@ -140,7 +162,7 @@ Key environment variables (see `.env.example` for full reference):
 | `PGPASSWORD` | Database password (env var only) | - |
 | `CACHE_ENABLED` | Enable schema caching | `true` |
 | `CACHE_TTL_HOURS` | Cache time-to-live | `24` |
-| `LOG_LEVEL` | Logging level | `INFO` |
+| `LOG_LEVEL` | Logging level (disabled by default unless specified) | disabled |
 | `PGSLICE_OUTPUT_DIR` | Output directory | `~/.pgslice/dumps` |
 
 ## Security

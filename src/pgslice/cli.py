@@ -4,16 +4,142 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import datetime
 from importlib.metadata import version as get_version
 
-from .config import load_config
+from .config import AppConfig, load_config
 from .db.connection import ConnectionManager
+from .dumper.dump_service import DumpService
+from .dumper.writer import SQLWriter
+from .graph.models import TimeframeFilter
 from .repl import REPL
-from .utils.exceptions import DBReverseDumpError
+from .utils.exceptions import DBReverseDumpError, InvalidTimeframeError
 from .utils.logging_config import get_logger, setup_logging
 from .utils.security import SecureCredentials
 
 logger = get_logger(__name__)
+
+
+def parse_timeframe(spec: str) -> TimeframeFilter:
+    """
+    Parse timeframe specification.
+
+    Format: table:column:start_date:end_date
+    Or: table:start_date:end_date (assumes 'created_at' column)
+
+    Args:
+        spec: Timeframe specification string
+
+    Returns:
+        TimeframeFilter object
+
+    Raises:
+        InvalidTimeframeError: If specification is invalid
+    """
+    parts = spec.split(":")
+
+    if len(parts) == 3:
+        # Format: table:start:end (assume created_at)
+        table_name, start_str, end_str = parts
+        column_name = "created_at"
+    elif len(parts) == 4:
+        # Format: table:column:start:end
+        table_name, column_name, start_str, end_str = parts
+    else:
+        raise InvalidTimeframeError(
+            f"Invalid timeframe format: {spec}. "
+            "Expected: table:column:start:end or table:start:end"
+        )
+
+    # Parse dates
+    try:
+        start_date = datetime.fromisoformat(start_str)
+    except ValueError as e:
+        raise InvalidTimeframeError(f"Invalid start date: {start_str}") from e
+
+    try:
+        end_date = datetime.fromisoformat(end_str)
+    except ValueError as e:
+        raise InvalidTimeframeError(f"Invalid end date: {end_str}") from e
+
+    return TimeframeFilter(
+        table_name=table_name,
+        column_name=column_name,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
+def parse_timeframes(specs: list[str] | None) -> list[TimeframeFilter]:
+    """
+    Parse multiple timeframe specifications.
+
+    Args:
+        specs: List of timeframe specification strings
+
+    Returns:
+        List of TimeframeFilter objects
+    """
+    if not specs:
+        return []
+
+    filters = []
+    for spec in specs:
+        filters.append(parse_timeframe(spec))
+    return filters
+
+
+def run_cli_dump(
+    args: argparse.Namespace,
+    config: AppConfig,
+    conn_manager: ConnectionManager,
+) -> int:
+    """
+    Execute dump in non-interactive CLI mode.
+
+    Args:
+        args: Parsed command line arguments
+        config: Application configuration
+        conn_manager: Database connection manager
+
+    Returns:
+        Exit code (0 for success, non-zero for error)
+    """
+    # Parse timeframe filters
+    try:
+        timeframe_filters = parse_timeframes(args.timeframe)
+    except InvalidTimeframeError as e:
+        sys.stderr.write(f"Error: {e}\n")
+        return 1
+
+    # Show progress only if stderr is a TTY (not piped)
+    show_progress = sys.stderr.isatty()
+
+    # Create dump service
+    service = DumpService(conn_manager, config, show_progress=show_progress)
+
+    # Parse PK values
+    pk_values = [v.strip() for v in args.pks.split(",")]
+
+    # Execute dump
+    result = service.dump(
+        table=args.table,
+        pk_values=pk_values,
+        schema=args.schema,
+        wide_mode=args.wide,
+        keep_pks=args.keep_pks,
+        create_schema=args.create_schema,
+        timeframe_filters=timeframe_filters,
+    )
+
+    # Output SQL
+    if args.output:
+        SQLWriter.write_to_file(result.sql_content, args.output)
+        sys.stderr.write(f"Wrote {result.record_count} records to {args.output}\n")
+    else:
+        SQLWriter.write_to_stdout(result.sql_content)
+
+    return 0
 
 
 def main() -> int:
@@ -28,11 +154,17 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Start interactive REPL
-  %(prog)s --host localhost --port 5432 --user postgres --database mydb
+  # CLI mode: dump to stdout (recommended)
+  PGPASSWORD=xxx %(prog)s --host localhost --database mydb --table users --pks 42
 
-  # Require read-only connection
-  %(prog)s --host prod-db --require-read-only --database mydb
+  # CLI mode: dump to file
+  %(prog)s --host localhost --database mydb --table users --pks 1,2,3 --output users.sql
+
+  # CLI mode: wide mode with DDL
+  %(prog)s --host localhost --database mydb --table customer --pks 42 --wide --create-schema
+
+  # Interactive REPL (deprecated)
+  %(prog)s --host localhost --database mydb
 
   # Clear cache and exit
   %(prog)s --clear-cache
@@ -80,12 +212,43 @@ Examples:
         help="Include DDL statements (CREATE DATABASE/SCHEMA/TABLE) in SQL dumps",
     )
 
+    # Dump operation arguments (non-interactive CLI mode)
+    dump_group = parser.add_argument_group("Dump Operation (CLI mode)")
+    dump_group.add_argument(
+        "--table",
+        help="Table name to dump (enables non-interactive CLI mode)",
+    )
+    dump_group.add_argument(
+        "--pks",
+        help="Primary key value(s), comma-separated (e.g., '42' or '1,2,3')",
+    )
+    dump_group.add_argument(
+        "--wide",
+        action="store_true",
+        help="Wide mode: follow all relationships including self-referencing FKs",
+    )
+    dump_group.add_argument(
+        "--keep-pks",
+        action="store_true",
+        help="Keep original primary key values (default: remap auto-generated PKs)",
+    )
+    dump_group.add_argument(
+        "--timeframe",
+        action="append",
+        help="Timeframe filter (format: table:column:start:end). Can be repeated.",
+    )
+    dump_group.add_argument(
+        "--output",
+        "-o",
+        help="Output file path (default: stdout)",
+    )
+
     # Other arguments
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-        default="INFO",
-        help="Log level (default: INFO)",
+        default=None,
+        help="Log level (default: disabled unless specified)",
     )
     # Get version dynamically from package metadata
     try:
@@ -125,7 +288,13 @@ Examples:
         if args.create_schema:
             config.create_schema = True
 
-        config.log_level = args.log_level
+        if args.log_level:
+            config.log_level = args.log_level
+
+        # Validate CLI dump mode arguments
+        if args.table and not args.pks:
+            sys.stderr.write("Error: --pks is required when using --table\n")
+            return 1
 
         # Clear cache if requested
         if args.clear_cache:
@@ -165,16 +334,20 @@ Examples:
             logger.error(f"Connection failed: {e}")
             raise
 
-        # Start REPL
+        # Route: CLI dump mode vs REPL mode
         try:
-            repl = REPL(conn_manager, config)
-            repl.start()
+            if args.table:
+                # Non-interactive CLI dump mode
+                return run_cli_dump(args, config, conn_manager)
+            else:
+                # Interactive REPL mode
+                repl = REPL(conn_manager, config)
+                repl.start()
+                return 0
         finally:
             # Clean up
             conn_manager.close()
             credentials.clear()
-
-        return 0
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")

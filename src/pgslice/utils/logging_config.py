@@ -1,17 +1,32 @@
 """Logging configuration for pgslice."""
 
+from __future__ import annotations
+
 import logging
 import sys
 
 
-def setup_logging(log_level: str = "INFO") -> None:
+def disable_logging() -> None:
+    """Disable all logging output."""
+    logging.disable(logging.CRITICAL)
+
+
+def setup_logging(log_level: str | None = None) -> None:
     """
     Configure logging for the application.
 
     Args:
-        log_level: Logging level (DEBUG, INFO, WARNING, ERROR)
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR).
+                   If None, logging is disabled entirely.
     """
+    if log_level is None:
+        disable_logging()
+        return
+
     level = getattr(logging, log_level.upper(), logging.INFO)
+
+    # Re-enable logging in case it was previously disabled
+    logging.disable(logging.NOTSET)
 
     # Create formatter
     formatter = logging.Formatter(
@@ -27,8 +42,8 @@ def setup_logging(log_level: str = "INFO") -> None:
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Add console handler
-    console_handler = logging.StreamHandler(sys.stdout)
+    # Add console handler to stderr (not stdout, to avoid mixing with SQL output)
+    console_handler = logging.StreamHandler(sys.stderr)
     console_handler.setLevel(level)
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)

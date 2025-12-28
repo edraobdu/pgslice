@@ -16,12 +16,9 @@ from .cache.schema_cache import SchemaCache
 from .config import AppConfig
 from .db.connection import ConnectionManager
 from .db.schema import SchemaIntrospector
-from .dumper.dependency_sorter import DependencySorter
-from .dumper.sql_generator import SQLGenerator
+from .dumper.dump_service import DumpService
 from .dumper.writer import SQLWriter
 from .graph.models import TimeframeFilter
-from .graph.traverser import RelationshipTraverser
-from .graph.visited_tracker import VisitedTracker
 from .utils.exceptions import DBReverseDumpError, InvalidTimeframeError
 from .utils.logging_config import get_logger
 
@@ -63,7 +60,18 @@ class REPL:
         }
 
     def start(self) -> None:
-        """Start the REPL."""
+        """Start the REPL with deprecation warning."""
+        # Show deprecation warning
+        printy("\n[y]" + "=" * 70 + "@")
+        printy("[y]WARNING: The interactive REPL is deprecated and will be removed@")
+        printy("[y]in a future version.@")
+        printy("[y]@")
+        printy("[y]Use CLI flags instead:@")
+        printy("[y]  pgslice --table users --pks 1,2,3 > output.sql@")
+        printy("[y]@")
+        printy("[y]See 'pgslice --help' for all available options.@")
+        printy("[y]" + "=" * 70 + "@\n")
+
         # Create prompt session with history
         history_file = Path.home() / ".pgslice_history"
         self.session = PromptSession(
@@ -71,7 +79,7 @@ class REPL:
             completer=WordCompleter(list(self.commands.keys()), ignore_case=True),
         )
 
-        printy("\n[cB]pgslice REPL@")
+        printy("[cB]pgslice REPL@")
         printy("Type 'help' for commands, 'exit' to quit\n")
 
         while True:
@@ -190,51 +198,25 @@ class REPL:
                 printy(f"  - {tf}")
 
         try:
-            # Get connection
-            conn = self.conn_manager.get_connection()
-
-            # Create introspector
-            introspector = SchemaIntrospector(conn)
-
-            # Create traverser
-            visited = VisitedTracker()
-            traverser = RelationshipTraverser(
-                conn, introspector, visited, timeframe_filters, wide_mode=wide_mode
-            )
-
-            # Traverse relationships
-            if len(pk_values) == 1:
-                records = traverser.traverse(
-                    table_name, pk_values[0], schema, self.config.max_depth
-                )
-            else:
-                records = traverser.traverse_multiple(
-                    table_name, pk_values, schema, self.config.max_depth
-                )
-
-            printy(f"\n[g]Found {len(records)} related records@")
-
-            # Sort by dependencies
-            sorter = DependencySorter()
-            sorted_records = sorter.sort(records)
-
-            # Generate SQL
-            generator = SQLGenerator(
-                introspector, batch_size=self.config.sql_batch_size
-            )
-            sql = generator.generate_batch(
-                sorted_records,
+            # Use DumpService for the actual dump
+            service = DumpService(self.conn_manager, self.config, show_progress=False)
+            result = service.dump(
+                table=table_name,
+                pk_values=pk_values,
+                schema=schema,
+                wide_mode=wide_mode,
                 keep_pks=keep_pks,
                 create_schema=create_schema_ddl,
-                database_name=self.config.db.database,
-                schema_name=schema,
+                timeframe_filters=timeframe_filters,
             )
+
+            printy(f"\n[g]Found {result.record_count} related records@")
 
             # Output
             if output_file:
-                SQLWriter.write_to_file(sql, output_file)
+                SQLWriter.write_to_file(result.sql_content, output_file)
                 printy(
-                    f"[g]Wrote {len(sorted_records)} INSERT statements to {output_file}@"
+                    f"[g]Wrote {result.record_count} INSERT statements to {output_file}@"
                 )
             else:
                 # Use default output path
@@ -244,9 +226,9 @@ class REPL:
                     pk_values[0],  # Use first PK for filename
                     schema,
                 )
-                SQLWriter.write_to_file(sql, str(default_path))
+                SQLWriter.write_to_file(result.sql_content, str(default_path))
                 printy(
-                    f"[g]Wrote {len(sorted_records)} INSERT statements to {default_path}@"
+                    f"[g]Wrote {result.record_count} INSERT statements to {default_path}@"
                 )
 
         except DBReverseDumpError as e:

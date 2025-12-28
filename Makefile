@@ -54,41 +54,6 @@ clean:  ## Remove build artifacts and cache
 show-version:  ## Show current version from pyproject.toml
 	@uv version
 
-bump-patch:  ## Bump patch version (0.1.1 -> 0.1.2)
-	@uv version --bump patch
-
-bump-minor:  ## Bump minor version (0.1.1 -> 0.2.0)
-	@uv version --bump minor
-
-bump-major:  ## Bump major version (0.1.1 -> 1.0.0)
-	@uv version --bump major
-
-# Python package building and publishing
-build-dist: clean  ## Build Python distribution packages (wheel + sdist)
-	@echo "Building distribution packages..."
-	uv build
-	@echo "Build complete! Packages in dist/"
-	@ls -lh dist/
-
-install-local: build-dist  ## Install package locally from built wheel
-	@echo "Installing from local build..."
-	uv pip install dist/*.whl --force-reinstall
-	@echo "Installation complete! Test with: pgslice --version"
-
-publish-test: build-dist  ## Publish to TestPyPI for testing
-	@echo "Publishing to TestPyPI..."
-	uv publish --publish-url https://test.pypi.org/legacy/
-	@echo "Published to TestPyPI! Install with:"
-	@echo "  pip install --index-url https://test.pypi.org/simple/ pgslice"
-
-publish: all-checks build-dist  ## Publish to production PyPI (requires confirmation)
-	@echo "WARNING: This will publish to production PyPI!"
-	@read -p "Version $$(grep '^version = ' pyproject.toml | cut -d'"' -f2) - Continue? [y/N] " confirm && \
-	[ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ] || (echo "Aborted." && exit 1)
-	@echo "Publishing to PyPI..."
-	uv publish
-	@echo "Published! Install with: pip install pgslice"
-
 # Docker commands
 docker-build:  ## Build Docker image
 	docker build -t $(DOCKER_IMAGE) .
@@ -122,17 +87,6 @@ uv-install:  ## Install uv (one-time setup)
 
 sync:  ## Sync dependencies with uv (local development)
 	uv sync --all-extras
-
-lock:  ## Update uv.lock file
-	uv lock
-
-test-compat:  ## Test compatibility across Python versions
-	@echo "Testing Python 3.10..."
-	@uv run --python 3.10 python --version || echo "Python 3.10 not available"
-	@echo "Testing Python 3.13..."
-	@uv run --python 3.13 python --version || echo "Python 3.13 not available"
-	@echo "Testing Python 3.14..."
-	@uv run --python 3.14 python --version || echo "Python 3.14 not available"
 
 setup:  ## One-time local development setup
 	@echo "Copying env file..."

@@ -327,251 +327,139 @@ class TestCmdDump(TestREPL):
     def test_executes_dump(
         self, repl: REPL, mock_connection_manager: MagicMock, tmp_path: Path
     ) -> None:
-        """Should execute dump command."""
-        from pgslice.graph.models import Column, RecordData, RecordIdentifier, Table
+        """Should execute dump command using DumpService."""
+        from pgslice.dumper.dump_service import DumpResult
 
-        mock_table = Table(
-            schema_name="public",
-            table_name="users",
-            columns=[
-                Column(
-                    name="id",
-                    data_type="integer",
-                    udt_name="int4",
-                    nullable=False,
-                    is_primary_key=True,
-                ),
-            ],
-            primary_keys=["id"],
-            foreign_keys_outgoing=[],
-            foreign_keys_incoming=[],
+        mock_result = DumpResult(
+            sql_content="INSERT INTO users (id) VALUES (42);",
+            record_count=1,
+            tables_involved={"users"},
         )
 
-        mock_record = RecordData(
-            identifier=RecordIdentifier(
-                schema_name="public",
-                table_name="users",
-                pk_values=("42",),
-            ),
-            data={"id": 42},
-        )
+        with (
+            patch("pgslice.repl.DumpService") as mock_dump_service,
+            patch("pgslice.repl.SQLWriter") as mock_writer,
+            patch("pgslice.repl.printy"),
+        ):
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.return_value = mock_result
+            mock_dump_service.return_value = mock_service_instance
 
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
-            mock_intro_instance = MagicMock()
-            mock_intro_instance.get_table_metadata.return_value = mock_table
-            mock_introspector.return_value = mock_intro_instance
+            mock_writer.get_default_output_path.return_value = tmp_path / "users_42.sql"
 
-            with patch("pgslice.repl.RelationshipTraverser") as mock_traverser:
-                mock_trav_instance = MagicMock()
-                mock_trav_instance.traverse.return_value = {mock_record}
-                mock_traverser.return_value = mock_trav_instance
+            repl._cmd_dump(["users", "42"])
 
-                with patch("pgslice.repl.DependencySorter") as mock_sorter:
-                    mock_sorter_instance = MagicMock()
-                    mock_sorter_instance.sort.return_value = [mock_record]
-                    mock_sorter.return_value = mock_sorter_instance
-
-                    with patch("pgslice.repl.SQLGenerator") as mock_generator:
-                        mock_gen_instance = MagicMock()
-                        mock_gen_instance.generate_batch.return_value = (
-                            "INSERT INTO users (id) VALUES (42);"
-                        )
-                        mock_generator.return_value = mock_gen_instance
-
-                        with patch("pgslice.repl.SQLWriter") as mock_writer:
-                            mock_writer.get_default_output_path.return_value = (
-                                tmp_path / "users_42.sql"
-                            )
-
-                            with patch("pgslice.repl.printy"):
-                                repl._cmd_dump(["users", "42"])
-
-                            mock_trav_instance.traverse.assert_called_once()
-                            mock_sorter_instance.sort.assert_called_once()
-                            mock_gen_instance.generate_batch.assert_called_once()
+            mock_service_instance.dump.assert_called_once()
+            call_kwargs = mock_service_instance.dump.call_args[1]
+            assert call_kwargs["table"] == "users"
+            assert call_kwargs["pk_values"] == ["42"]
 
     def test_executes_dump_with_output_file(
         self, repl: REPL, mock_connection_manager: MagicMock, tmp_path: Path
     ) -> None:
         """Should execute dump with specified output file."""
-        from pgslice.graph.models import Column, RecordData, RecordIdentifier, Table
+        from pgslice.dumper.dump_service import DumpResult
 
-        mock_table = Table(
-            schema_name="public",
-            table_name="users",
-            columns=[
-                Column(
-                    name="id",
-                    data_type="integer",
-                    udt_name="int4",
-                    nullable=False,
-                    is_primary_key=True,
-                ),
-            ],
-            primary_keys=["id"],
-            foreign_keys_outgoing=[],
-            foreign_keys_incoming=[],
-        )
-
-        mock_record = RecordData(
-            identifier=RecordIdentifier(
-                schema_name="public",
-                table_name="users",
-                pk_values=("42",),
-            ),
-            data={"id": 42},
+        mock_result = DumpResult(
+            sql_content="INSERT INTO users (id) VALUES (42);",
+            record_count=1,
+            tables_involved={"users"},
         )
 
         output_file = str(tmp_path / "custom_output.sql")
 
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
-            mock_intro_instance = MagicMock()
-            mock_intro_instance.get_table_metadata.return_value = mock_table
-            mock_introspector.return_value = mock_intro_instance
+        with (
+            patch("pgslice.repl.DumpService") as mock_dump_service,
+            patch("pgslice.repl.SQLWriter") as mock_writer,
+            patch("pgslice.repl.printy"),
+        ):
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.return_value = mock_result
+            mock_dump_service.return_value = mock_service_instance
 
-            with patch("pgslice.repl.RelationshipTraverser") as mock_traverser:
-                mock_trav_instance = MagicMock()
-                mock_trav_instance.traverse.return_value = {mock_record}
-                mock_traverser.return_value = mock_trav_instance
+            repl._cmd_dump(["users", "42", "--output", output_file])
 
-                with patch("pgslice.repl.DependencySorter") as mock_sorter:
-                    mock_sorter_instance = MagicMock()
-                    mock_sorter_instance.sort.return_value = [mock_record]
-                    mock_sorter.return_value = mock_sorter_instance
-
-                    with patch("pgslice.repl.SQLGenerator") as mock_generator:
-                        mock_gen_instance = MagicMock()
-                        mock_gen_instance.generate_batch.return_value = (
-                            "INSERT INTO users (id) VALUES (42);"
-                        )
-                        mock_generator.return_value = mock_gen_instance
-
-                        with patch("pgslice.repl.SQLWriter") as mock_writer:
-                            with patch("pgslice.repl.printy"):
-                                repl._cmd_dump(["users", "42", "--output", output_file])
-
-                            mock_writer.write_to_file.assert_called_once()
-                            call_args = mock_writer.write_to_file.call_args
-                            assert call_args[0][1] == output_file
+            mock_writer.write_to_file.assert_called_once()
+            call_args = mock_writer.write_to_file.call_args
+            assert call_args[0][1] == output_file
 
     def test_executes_dump_with_multiple_pks(
         self, repl: REPL, mock_connection_manager: MagicMock, tmp_path: Path
     ) -> None:
         """Should execute dump with multiple PKs."""
-        from pgslice.graph.models import RecordData, RecordIdentifier
+        from pgslice.dumper.dump_service import DumpResult
 
-        mock_record = RecordData(
-            identifier=RecordIdentifier(
-                schema_name="public",
-                table_name="users",
-                pk_values=("42",),
-            ),
-            data={"id": 42},
+        mock_result = DumpResult(
+            sql_content="INSERT...",
+            record_count=3,
+            tables_involved={"users"},
         )
 
         with (
-            patch("pgslice.repl.SchemaIntrospector"),
-            patch("pgslice.repl.RelationshipTraverser") as mock_traverser,
-            patch("pgslice.repl.DependencySorter") as mock_sorter,
-            patch("pgslice.repl.SQLGenerator") as mock_generator,
+            patch("pgslice.repl.DumpService") as mock_dump_service,
             patch("pgslice.repl.SQLWriter") as mock_writer,
             patch("pgslice.repl.printy"),
         ):
-            mock_trav_instance = MagicMock()
-            mock_trav_instance.traverse_multiple.return_value = {mock_record}
-            mock_traverser.return_value = mock_trav_instance
-
-            mock_sorter_instance = MagicMock()
-            mock_sorter_instance.sort.return_value = [mock_record]
-            mock_sorter.return_value = mock_sorter_instance
-
-            mock_gen_instance = MagicMock()
-            mock_gen_instance.generate_batch.return_value = "INSERT..."
-            mock_generator.return_value = mock_gen_instance
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.return_value = mock_result
+            mock_dump_service.return_value = mock_service_instance
 
             mock_writer.get_default_output_path.return_value = tmp_path / "out.sql"
 
             repl._cmd_dump(["users", "42,43,44"])
 
-            mock_trav_instance.traverse_multiple.assert_called_once()
+            call_kwargs = mock_service_instance.dump.call_args[1]
+            assert call_kwargs["pk_values"] == ["42", "43", "44"]
 
     def test_handles_wide_mode_flag(
         self, repl: REPL, mock_connection_manager: MagicMock, tmp_path: Path
     ) -> None:
         """Should handle --wide flag."""
-        from pgslice.graph.models import RecordData, RecordIdentifier
+        from pgslice.dumper.dump_service import DumpResult
 
-        mock_record = RecordData(
-            identifier=RecordIdentifier(
-                schema_name="public",
-                table_name="users",
-                pk_values=("42",),
-            ),
-            data={"id": 42},
+        mock_result = DumpResult(
+            sql_content="INSERT...",
+            record_count=1,
+            tables_involved={"users"},
         )
 
         with (
-            patch("pgslice.repl.SchemaIntrospector"),
-            patch("pgslice.repl.RelationshipTraverser") as mock_traverser,
-            patch("pgslice.repl.DependencySorter") as mock_sorter,
-            patch("pgslice.repl.SQLGenerator") as mock_generator,
+            patch("pgslice.repl.DumpService") as mock_dump_service,
             patch("pgslice.repl.SQLWriter") as mock_writer,
             patch("pgslice.repl.printy"),
         ):
-            mock_trav_instance = MagicMock()
-            mock_trav_instance.traverse.return_value = {mock_record}
-            mock_traverser.return_value = mock_trav_instance
-
-            mock_sorter_instance = MagicMock()
-            mock_sorter_instance.sort.return_value = [mock_record]
-            mock_sorter.return_value = mock_sorter_instance
-
-            mock_gen_instance = MagicMock()
-            mock_gen_instance.generate_batch.return_value = "INSERT..."
-            mock_generator.return_value = mock_gen_instance
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.return_value = mock_result
+            mock_dump_service.return_value = mock_service_instance
 
             mock_writer.get_default_output_path.return_value = tmp_path / "out.sql"
 
             repl._cmd_dump(["users", "42", "--wide"])
 
-            # Check that wide_mode=True was passed to traverser
-            call_args = mock_traverser.call_args
-            assert call_args[1]["wide_mode"] is True
+            # Check that wide_mode=True was passed to DumpService.dump()
+            call_kwargs = mock_service_instance.dump.call_args[1]
+            assert call_kwargs["wide_mode"] is True
 
     def test_handles_timeframe_flag(
         self, repl: REPL, mock_connection_manager: MagicMock, tmp_path: Path
     ) -> None:
         """Should handle --timeframe flag."""
-        from pgslice.graph.models import RecordData, RecordIdentifier
+        from pgslice.dumper.dump_service import DumpResult
 
-        mock_record = RecordData(
-            identifier=RecordIdentifier(
-                schema_name="public",
-                table_name="users",
-                pk_values=("42",),
-            ),
-            data={"id": 42},
+        mock_result = DumpResult(
+            sql_content="INSERT...",
+            record_count=1,
+            tables_involved={"users"},
         )
 
         with (
-            patch("pgslice.repl.SchemaIntrospector"),
-            patch("pgslice.repl.RelationshipTraverser") as mock_traverser,
-            patch("pgslice.repl.DependencySorter") as mock_sorter,
-            patch("pgslice.repl.SQLGenerator") as mock_generator,
+            patch("pgslice.repl.DumpService") as mock_dump_service,
             patch("pgslice.repl.SQLWriter") as mock_writer,
             patch("pgslice.repl.printy"),
         ):
-            mock_trav_instance = MagicMock()
-            mock_trav_instance.traverse.return_value = {mock_record}
-            mock_traverser.return_value = mock_trav_instance
-
-            mock_sorter_instance = MagicMock()
-            mock_sorter_instance.sort.return_value = [mock_record]
-            mock_sorter.return_value = mock_sorter_instance
-
-            mock_gen_instance = MagicMock()
-            mock_gen_instance.generate_batch.return_value = "INSERT..."
-            mock_generator.return_value = mock_gen_instance
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.return_value = mock_result
+            mock_dump_service.return_value = mock_service_instance
 
             mock_writer.get_default_output_path.return_value = tmp_path / "out.sql"
 
@@ -584,14 +472,14 @@ class TestCmdDump(TestREPL):
                 ]
             )
 
-            # Check that timeframe was passed
-            call_args = mock_traverser.call_args
-            assert len(call_args[0][3]) == 1  # timeframe_filters
+            # Check that timeframe_filters was passed to DumpService.dump()
+            call_kwargs = mock_service_instance.dump.call_args[1]
+            assert len(call_kwargs["timeframe_filters"]) == 1
 
     def test_handles_invalid_timeframe(self, repl: REPL) -> None:
         """Should handle invalid timeframe."""
         with patch("pgslice.repl.printy"):
-            # Invalid format
+            # Invalid format - should not raise, just print error
             repl._cmd_dump(["users", "42", "--timeframe", "invalid"])
 
     def test_handles_dump_error(
@@ -600,12 +488,16 @@ class TestCmdDump(TestREPL):
         """Should handle errors during dump."""
         from pgslice.utils.exceptions import RecordNotFoundError
 
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
-            mock_introspector.side_effect = RecordNotFoundError("Not found")
+        with (
+            patch("pgslice.repl.DumpService") as mock_dump_service,
+            patch("pgslice.repl.printy"),
+        ):
+            mock_service_instance = MagicMock()
+            mock_service_instance.dump.side_effect = RecordNotFoundError("Not found")
+            mock_dump_service.return_value = mock_service_instance
 
-            with patch("pgslice.repl.printy"):
-                # Should not raise
-                repl._cmd_dump(["users", "42"])
+            # Should not raise
+            repl._cmd_dump(["users", "42"])
 
 
 class TestParseTimeframe(TestREPL):
