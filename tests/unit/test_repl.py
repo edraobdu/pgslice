@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from datetime import datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +10,6 @@ import pytest
 
 from pgslice.config import AppConfig, CacheConfig, DatabaseConfig
 from pgslice.repl import REPL
-from pgslice.utils.exceptions import InvalidTimeframeError
 
 
 class TestREPL:
@@ -154,12 +152,14 @@ class TestCmdListTables(TestREPL):
         self, repl: REPL, mock_connection_manager: MagicMock
     ) -> None:
         """Should list tables in default schema."""
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
+        with patch(
+            "pgslice.operations.schema_ops.SchemaIntrospector"
+        ) as mock_introspector:
             mock_instance = MagicMock()
             mock_instance.get_all_tables.return_value = ["users", "orders"]
             mock_introspector.return_value = mock_instance
 
-            with patch("pgslice.repl.printy"):
+            with patch("pgslice.operations.schema_ops.printy"):
                 repl._cmd_list_tables([])
 
             mock_instance.get_all_tables.assert_called_once_with("public")
@@ -168,12 +168,14 @@ class TestCmdListTables(TestREPL):
         self, repl: REPL, mock_connection_manager: MagicMock
     ) -> None:
         """Should list tables in custom schema."""
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
+        with patch(
+            "pgslice.operations.schema_ops.SchemaIntrospector"
+        ) as mock_introspector:
             mock_instance = MagicMock()
             mock_instance.get_all_tables.return_value = ["custom_table"]
             mock_introspector.return_value = mock_instance
 
-            with patch("pgslice.repl.printy"):
+            with patch("pgslice.operations.schema_ops.printy"):
                 repl._cmd_list_tables(["--schema", "custom"])
 
             mock_instance.get_all_tables.assert_called_once_with("custom")
@@ -182,10 +184,15 @@ class TestCmdListTables(TestREPL):
         self, repl: REPL, mock_connection_manager: MagicMock
     ) -> None:
         """Should handle errors gracefully."""
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
+        with patch(
+            "pgslice.operations.schema_ops.SchemaIntrospector"
+        ) as mock_introspector:
             mock_introspector.side_effect = Exception("Connection error")
 
-            with patch("pgslice.repl.printy"):
+            with (
+                patch("pgslice.repl.printy"),
+                patch("pgslice.operations.schema_ops.printy"),
+            ):
                 # Should not raise
                 repl._cmd_list_tables([])
 
@@ -246,14 +253,16 @@ class TestCmdDescribeTable(TestREPL):
             ],
         )
 
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
+        with patch(
+            "pgslice.operations.schema_ops.SchemaIntrospector"
+        ) as mock_introspector:
             mock_instance = MagicMock()
             mock_instance.get_table_metadata.return_value = mock_table
             mock_introspector.return_value = mock_instance
 
             with (
-                patch("pgslice.repl.printy"),
-                patch("pgslice.repl.tabulate", return_value=""),
+                patch("pgslice.operations.schema_ops.printy"),
+                patch("pgslice.operations.schema_ops.tabulate", return_value=""),
             ):
                 repl._cmd_describe_table(["users"])
 
@@ -281,14 +290,16 @@ class TestCmdDescribeTable(TestREPL):
             foreign_keys_incoming=[],
         )
 
-        with patch("pgslice.repl.SchemaIntrospector") as mock_introspector:
+        with patch(
+            "pgslice.operations.schema_ops.SchemaIntrospector"
+        ) as mock_introspector:
             mock_instance = MagicMock()
             mock_instance.get_table_metadata.return_value = mock_table
             mock_introspector.return_value = mock_instance
 
             with (
-                patch("pgslice.repl.printy"),
-                patch("pgslice.repl.tabulate", return_value=""),
+                patch("pgslice.operations.schema_ops.printy"),
+                patch("pgslice.operations.schema_ops.tabulate", return_value=""),
             ):
                 repl._cmd_describe_table(["data", "--schema", "custom"])
 
@@ -498,46 +509,6 @@ class TestCmdDump(TestREPL):
 
             # Should not raise
             repl._cmd_dump(["users", "42"])
-
-
-class TestParseTimeframe(TestREPL):
-    """Tests for _parse_timeframe method."""
-
-    def test_parses_four_part_format(self, repl: REPL) -> None:
-        """Should parse table:column:start:end format."""
-        result = repl._parse_timeframe("orders:created_at:2024-01-01:2024-12-31")
-
-        assert result.table_name == "orders"
-        assert result.column_name == "created_at"
-        assert result.start_date == datetime(2024, 1, 1)
-        assert result.end_date == datetime(2024, 12, 31)
-
-    def test_parses_three_part_format(self, repl: REPL) -> None:
-        """Should parse table:start:end format with default column."""
-        result = repl._parse_timeframe("orders:2024-01-01:2024-12-31")
-
-        assert result.table_name == "orders"
-        assert result.column_name == "created_at"
-        assert result.start_date == datetime(2024, 1, 1)
-        assert result.end_date == datetime(2024, 12, 31)
-
-    def test_raises_for_invalid_format(self, repl: REPL) -> None:
-        """Should raise for invalid format."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid timeframe format"):
-            repl._parse_timeframe("orders")
-
-        with pytest.raises(InvalidTimeframeError, match="Invalid timeframe format"):
-            repl._parse_timeframe("a:b:c:d:e")
-
-    def test_raises_for_invalid_start_date(self, repl: REPL) -> None:
-        """Should raise for invalid start date."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid start date"):
-            repl._parse_timeframe("orders:invalid:2024-12-31")
-
-    def test_raises_for_invalid_end_date(self, repl: REPL) -> None:
-        """Should raise for invalid end date."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid end date"):
-            repl._parse_timeframe("orders:2024-01-01:invalid")
 
 
 class TestStart(TestREPL):

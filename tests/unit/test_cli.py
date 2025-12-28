@@ -13,8 +13,6 @@ from pgslice.cli import (
     MainTableTimeframe,
     main,
     parse_main_timeframe,
-    parse_truncate_filter,
-    parse_truncate_filters,
     run_describe_table,
     run_list_tables,
 )
@@ -301,76 +299,6 @@ class TestMain:
                         mock_cm_instance.close.assert_called_once()
                         mock_creds_instance.clear.assert_called_once()
                         assert exit_code == 0
-
-
-class TestParseTruncateFilter:
-    """Tests for parse_truncate_filter function."""
-
-    def test_parses_four_part_format(self) -> None:
-        """Should parse table:column:start:end format."""
-        result = parse_truncate_filter("orders:created_at:2024-01-01:2024-12-31")
-
-        assert result.table_name == "orders"
-        assert result.column_name == "created_at"
-        assert result.start_date == datetime(2024, 1, 1)
-        assert result.end_date == datetime(2024, 12, 31)
-
-    def test_parses_three_part_format(self) -> None:
-        """Should parse table:start:end format with default column."""
-        result = parse_truncate_filter("orders:2024-01-01:2024-12-31")
-
-        assert result.table_name == "orders"
-        assert result.column_name == "created_at"
-        assert result.start_date == datetime(2024, 1, 1)
-        assert result.end_date == datetime(2024, 12, 31)
-
-    def test_raises_for_invalid_format(self) -> None:
-        """Should raise for invalid format."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid truncate filter"):
-            parse_truncate_filter("orders")
-
-        with pytest.raises(InvalidTimeframeError, match="Invalid truncate filter"):
-            parse_truncate_filter("a:b:c:d:e")
-
-    def test_raises_for_invalid_start_date(self) -> None:
-        """Should raise for invalid start date."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid start date"):
-            parse_truncate_filter("orders:invalid:2024-12-31")
-
-    def test_raises_for_invalid_end_date(self) -> None:
-        """Should raise for invalid end date."""
-        with pytest.raises(InvalidTimeframeError, match="Invalid end date"):
-            parse_truncate_filter("orders:2024-01-01:invalid")
-
-
-class TestParseTruncateFilters:
-    """Tests for parse_truncate_filters function."""
-
-    def test_returns_empty_for_none(self) -> None:
-        """Should return empty list for None."""
-        assert parse_truncate_filters(None) == []
-
-    def test_returns_empty_for_empty_list(self) -> None:
-        """Should return empty list for empty list."""
-        assert parse_truncate_filters([]) == []
-
-    def test_parses_single_filter(self) -> None:
-        """Should parse single truncate filter."""
-        result = parse_truncate_filters(["orders:2024-01-01:2024-12-31"])
-        assert len(result) == 1
-        assert result[0].table_name == "orders"
-
-    def test_parses_multiple_filters(self) -> None:
-        """Should parse multiple truncate filters."""
-        result = parse_truncate_filters(
-            [
-                "orders:2024-01-01:2024-12-31",
-                "users:created_at:2024-06-01:2024-06-30",
-            ]
-        )
-        assert len(result) == 2
-        assert result[0].table_name == "orders"
-        assert result[1].table_name == "users"
 
 
 class TestCLIDumpMode:
@@ -838,8 +766,10 @@ class TestSchemaInfoFlags:
             patch("pgslice.cli.load_config") as mock_load,
             patch("pgslice.cli.SecureCredentials"),
             patch("pgslice.cli.ConnectionManager") as mock_cm,
-            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
-            patch("pgslice.cli.printy") as mock_printy,
+            patch(
+                "pgslice.operations.schema_ops.SchemaIntrospector"
+            ) as mock_introspector,
+            patch("pgslice.operations.schema_ops.printy") as mock_printy,
         ):
             mock_config = MagicMock()
             mock_config.db.host = "localhost"
@@ -898,9 +828,13 @@ class TestSchemaInfoFlags:
             patch("pgslice.cli.load_config") as mock_load,
             patch("pgslice.cli.SecureCredentials"),
             patch("pgslice.cli.ConnectionManager") as mock_cm,
-            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
-            patch("pgslice.cli.printy") as mock_printy,
-            patch("pgslice.cli.tabulate", return_value="COLUMNS TABLE"),
+            patch(
+                "pgslice.operations.schema_ops.SchemaIntrospector"
+            ) as mock_introspector,
+            patch("pgslice.operations.schema_ops.printy") as mock_printy,
+            patch(
+                "pgslice.operations.schema_ops.tabulate", return_value="COLUMNS TABLE"
+            ),
         ):
             mock_config = MagicMock()
             mock_config.db.host = "localhost"
@@ -932,8 +866,10 @@ class TestSchemaInfoFlags:
         mock_conn_manager.get_connection.return_value = mock_conn
 
         with (
-            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
-            patch("pgslice.cli.printy"),
+            patch(
+                "pgslice.operations.schema_ops.SchemaIntrospector"
+            ) as mock_introspector,
+            patch("pgslice.operations.schema_ops.printy"),
         ):
             mock_introspector_instance = MagicMock()
             mock_introspector_instance.get_all_tables.return_value = ["table1"]
@@ -956,9 +892,11 @@ class TestSchemaInfoFlags:
         mock_table.foreign_keys_incoming = []
 
         with (
-            patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
-            patch("pgslice.cli.printy"),
-            patch("pgslice.cli.tabulate", return_value=""),
+            patch(
+                "pgslice.operations.schema_ops.SchemaIntrospector"
+            ) as mock_introspector,
+            patch("pgslice.operations.schema_ops.printy"),
+            patch("pgslice.operations.schema_ops.tabulate", return_value=""),
         ):
             mock_introspector_instance = MagicMock()
             mock_introspector_instance.get_table_metadata.return_value = mock_table

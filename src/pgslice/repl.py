@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import shlex
-from datetime import datetime
 from pathlib import Path
 
 from printy import printy, raw_format
@@ -15,10 +14,10 @@ from tabulate import tabulate
 from .cache.schema_cache import SchemaCache
 from .config import AppConfig
 from .db.connection import ConnectionManager
-from .db.schema import SchemaIntrospector
 from .dumper.dump_service import DumpService
 from .dumper.writer import SQLWriter
 from .graph.models import TimeframeFilter
+from .operations import describe_table, list_tables, parse_truncate_filter, print_tables
 from .utils.exceptions import DBReverseDumpError, InvalidTimeframeError
 from .utils.logging_config import get_logger
 
@@ -166,11 +165,11 @@ class REPL:
             else:
                 i += 1
 
-        # Parse timeframe filters
+        # Parse timeframe filters using shared function
         timeframe_filters: list[TimeframeFilter] = []
         for spec in timeframe_specs:
             try:
-                tf = self._parse_timeframe(spec)
+                tf = parse_truncate_filter(spec)
                 timeframe_filters.append(tf)
             except InvalidTimeframeError as e:
                 printy(f"[r]Invalid truncate filter: {e}@")
@@ -274,15 +273,8 @@ class REPL:
             schema = args[1]
 
         try:
-            conn = self.conn_manager.get_connection()
-            introspector = SchemaIntrospector(conn)
-            tables = introspector.get_all_tables(schema)
-
-            printy(f"\n[c]Tables in schema '{schema}':@\n")
-            for table in tables:
-                printy(f"  {table}")
-            printy(f"\n[g]Total: {len(tables)} tables@\n")
-
+            tables = list_tables(self.conn_manager, schema)
+            print_tables(tables, schema)
         except Exception as e:
             printy(f"[r]Error: {e}@")
 
@@ -300,55 +292,7 @@ class REPL:
             schema = args[2]
 
         try:
-            conn = self.conn_manager.get_connection()
-            introspector = SchemaIntrospector(conn)
-            table = introspector.get_table_metadata(schema, table_name)
-
-            printy(f"\n[c]Table: {table.full_name}@\n")
-
-            # Columns
-            printy("\n[cB]Columns@")
-            col_data = []
-            for col in table.columns:
-                pk_indicator = "✓" if col.is_primary_key else ""
-                col_data.append(
-                    [
-                        col.name,
-                        col.data_type,
-                        "YES" if col.nullable else "NO",
-                        col.default or "",
-                        pk_indicator,
-                    ]
-                )
-            table_str = tabulate(
-                col_data,
-                headers=["Name", "Type", "Nullable", "Default", "PK"],
-                tablefmt="simple",
-            )
-            printy(table_str)
-
-            # Primary keys
-            if table.primary_keys:
-                printy(f"\n[g]Primary Keys:@ {', '.join(table.primary_keys)}")
-
-            # Foreign keys outgoing
-            if table.foreign_keys_outgoing:
-                printy("\n[y]Foreign Keys (Outgoing):@")
-                for fk in table.foreign_keys_outgoing:
-                    printy(
-                        f"  {fk.source_column} → {fk.target_table}.{fk.target_column}"
-                    )
-
-            # Foreign keys incoming
-            if table.foreign_keys_incoming:
-                printy("\n[b]Referenced By (Incoming):@")
-                for fk in table.foreign_keys_incoming:
-                    printy(
-                        f"  {fk.source_table}.{fk.source_column} → {fk.target_column}"
-                    )
-
-            printy()
-
+            describe_table(self.conn_manager, schema, table_name)
         except Exception as e:
             printy(f"[r]Error: {e}@")
 
@@ -364,52 +308,3 @@ class REPL:
             printy("[g]Cache cleared successfully@")
         else:
             printy("[y]Cache not initialized@")
-
-    def _parse_timeframe(self, spec: str) -> TimeframeFilter:
-        """
-        Parse timeframe specification.
-
-        Format: table:column:start_date:end_date
-        Or: table:start_date:end_date (assumes 'created_at' column)
-
-        Args:
-            spec: Timeframe specification string
-
-        Returns:
-            TimeframeFilter object
-
-        Raises:
-            InvalidTimeframeError: If specification is invalid
-        """
-        parts = spec.split(":")
-
-        if len(parts) == 3:
-            # Format: table:start:end (assume created_at)
-            table_name, start_str, end_str = parts
-            column_name = "created_at"
-        elif len(parts) == 4:
-            # Format: table:column:start:end
-            table_name, column_name, start_str, end_str = parts
-        else:
-            raise InvalidTimeframeError(
-                f"Invalid timeframe format: {spec}. "
-                "Expected: table:column:start:end or table:start:end"
-            )
-
-        # Parse dates
-        try:
-            start_date = datetime.fromisoformat(start_str)
-        except ValueError as e:
-            raise InvalidTimeframeError(f"Invalid start date: {start_str}") from e
-
-        try:
-            end_date = datetime.fromisoformat(end_str)
-        except ValueError as e:
-            raise InvalidTimeframeError(f"Invalid end date: {end_str}") from e
-
-        return TimeframeFilter(
-            table_name=table_name,
-            column_name=column_name,
-            start_date=start_date,
-            end_date=end_date,
-        )

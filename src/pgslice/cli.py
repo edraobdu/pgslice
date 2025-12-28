@@ -9,14 +9,18 @@ from datetime import datetime
 from importlib.metadata import version as get_version
 
 from printy import printy
-from tabulate import tabulate
 
 from .config import AppConfig, load_config
 from .db.connection import ConnectionManager
 from .db.schema import SchemaIntrospector
 from .dumper.dump_service import DumpService
 from .dumper.writer import SQLWriter
-from .graph.models import TimeframeFilter
+from .operations import (
+    describe_table,
+    list_tables,
+    parse_truncate_filters,
+    print_tables,
+)
 from .repl import REPL
 from .utils.exceptions import DBReverseDumpError, InvalidTimeframeError
 from .utils.logging_config import get_logger, setup_logging
@@ -122,75 +126,6 @@ def fetch_pks_by_timeframe(
     return pk_values
 
 
-def parse_truncate_filter(spec: str) -> TimeframeFilter:
-    """
-    Parse truncate filter specification for related tables.
-
-    Format: table:column:start_date:end_date
-    Or: table:start_date:end_date (assumes 'created_at' column)
-
-    Args:
-        spec: Truncate filter specification string
-
-    Returns:
-        TimeframeFilter object
-
-    Raises:
-        InvalidTimeframeError: If specification is invalid
-    """
-    parts = spec.split(":")
-
-    if len(parts) == 3:
-        # Format: table:start:end (assume created_at)
-        table_name, start_str, end_str = parts
-        column_name = "created_at"
-    elif len(parts) == 4:
-        # Format: table:column:start:end
-        table_name, column_name, start_str, end_str = parts
-    else:
-        raise InvalidTimeframeError(
-            f"Invalid truncate filter format: {spec}. "
-            "Expected: table:column:start:end or table:start:end"
-        )
-
-    # Parse dates
-    try:
-        start_date = datetime.fromisoformat(start_str)
-    except ValueError as e:
-        raise InvalidTimeframeError(f"Invalid start date: {start_str}") from e
-
-    try:
-        end_date = datetime.fromisoformat(end_str)
-    except ValueError as e:
-        raise InvalidTimeframeError(f"Invalid end date: {end_str}") from e
-
-    return TimeframeFilter(
-        table_name=table_name,
-        column_name=column_name,
-        start_date=start_date,
-        end_date=end_date,
-    )
-
-
-def parse_truncate_filters(specs: list[str] | None) -> list[TimeframeFilter]:
-    """
-    Parse multiple truncate filter specifications for related tables.
-
-    Args:
-        specs: List of truncate filter specification strings
-
-    Returns:
-        List of TimeframeFilter objects
-    """
-    if not specs:
-        return []
-
-    filters = []
-    for spec in specs:
-        filters.append(parse_truncate_filter(spec))
-    return filters
-
-
 def run_cli_dump(
     args: argparse.Namespace,
     config: AppConfig,
@@ -274,14 +209,8 @@ def run_list_tables(conn_manager: ConnectionManager, schema: str) -> int:
         Exit code (0 for success, non-zero for error)
     """
     try:
-        conn = conn_manager.get_connection()
-        introspector = SchemaIntrospector(conn)
-        tables = introspector.get_all_tables(schema)
-
-        printy(f"\n[c]Tables in schema '{schema}':@\n")
-        for table in tables:
-            printy(f"  {table}")
-        printy(f"\n[g]Total: {len(tables)} tables@\n")
+        tables = list_tables(conn_manager, schema)
+        print_tables(tables, schema)
         return 0
     except Exception as e:
         printy(f"[r]Error: {e}@")
@@ -303,50 +232,7 @@ def run_describe_table(
         Exit code (0 for success, non-zero for error)
     """
     try:
-        conn = conn_manager.get_connection()
-        introspector = SchemaIntrospector(conn)
-        table = introspector.get_table_metadata(schema, table_name)
-
-        printy(f"\n[c]Table: {table.full_name}@\n")
-
-        # Columns
-        printy("\n[cB]Columns@")
-        col_data = []
-        for col in table.columns:
-            pk_indicator = "✓" if col.is_primary_key else ""
-            col_data.append(
-                [
-                    col.name,
-                    col.data_type,
-                    "YES" if col.nullable else "NO",
-                    col.default or "",
-                    pk_indicator,
-                ]
-            )
-        table_str = tabulate(
-            col_data,
-            headers=["Name", "Type", "Nullable", "Default", "PK"],
-            tablefmt="simple",
-        )
-        printy(table_str)
-
-        # Primary keys
-        if table.primary_keys:
-            printy(f"\n[g]Primary Keys:@ {', '.join(table.primary_keys)}")
-
-        # Foreign keys outgoing
-        if table.foreign_keys_outgoing:
-            printy("\n[y]Foreign Keys (Outgoing):@")
-            for fk in table.foreign_keys_outgoing:
-                printy(f"  {fk.source_column} → {fk.target_table}.{fk.target_column}")
-
-        # Foreign keys incoming
-        if table.foreign_keys_incoming:
-            printy("\n[b]Referenced By (Incoming):@")
-            for fk in table.foreign_keys_incoming:
-                printy(f"  {fk.source_table}.{fk.source_column} → {fk.target_column}")
-
-        printy()
+        describe_table(conn_manager, schema, table_name)
         return 0
     except Exception as e:
         printy(f"[r]Error: {e}@")
