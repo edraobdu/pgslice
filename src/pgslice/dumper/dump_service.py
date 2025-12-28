@@ -60,6 +60,7 @@ class DumpService:
         keep_pks: bool = False,
         create_schema: bool = False,
         timeframe_filters: list[TimeframeFilter] | None = None,
+        show_graph: bool = False,
     ) -> DumpResult:
         """
         Execute dump operation and return result.
@@ -72,6 +73,7 @@ class DumpService:
             keep_pks: Whether to keep original primary key values
             create_schema: Whether to include DDL statements
             timeframe_filters: Optional timeframe filters
+            show_graph: Whether to display relationship graph after dump
 
         Returns:
             DumpResult with SQL content and metadata
@@ -144,6 +146,23 @@ class DumpService:
             )
             pbar.set_description("Generating SQL ✓")
             pbar.update(1)
+
+            # Display graph if requested
+            if show_graph and self.show_progress:
+                from ..utils.graph_visualizer import GraphBuilder, GraphRenderer
+
+                builder = GraphBuilder()
+                graph = builder.build(records, table, schema)
+
+                renderer = GraphRenderer()
+                graph_output = renderer.render(graph)
+
+                # Print to stderr with header
+                sys.stderr.write("\n")
+                sys.stderr.write("=== Relationship Graph ===\n")
+                sys.stderr.write(graph_output)
+                sys.stderr.write("\n\n")
+                sys.stderr.flush()
 
             # Step 4: Complete
             pbar.set_description("Complete ✓")

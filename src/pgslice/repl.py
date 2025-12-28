@@ -126,6 +126,7 @@ class REPL:
             printy(
                 "  --create-schema       Include CREATE DATABASE/SCHEMA/TABLE statements"
             )
+            printy("  --graph               Display relationship graph after dump")
             return
 
         table_name = args[0]
@@ -141,6 +142,7 @@ class REPL:
         wide_mode = False
         keep_pks = False  # Default: remap auto-generated PKs
         create_schema_ddl = self.config.create_schema  # Default from config
+        show_graph = False
 
         i = 2
         while i < len(args):
@@ -161,6 +163,9 @@ class REPL:
                 i += 1
             elif args[i] == "--create-schema":
                 create_schema_ddl = True
+                i += 1
+            elif args[i] == "--graph":
+                show_graph = True
                 i += 1
             else:
                 i += 1
@@ -199,6 +204,7 @@ class REPL:
                 keep_pks=keep_pks,
                 create_schema=create_schema_ddl,
                 timeframe_filters=timeframe_filters,
+                show_graph=show_graph,
             )
 
             printy(f"\n[g]Found {result.record_count} related records@")

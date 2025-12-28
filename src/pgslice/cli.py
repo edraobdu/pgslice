@@ -185,6 +185,7 @@ def run_cli_dump(
         keep_pks=args.keep_pks,
         create_schema=args.create_schema,
         timeframe_filters=truncate_filters,
+        show_graph=args.graph,
     )
 
     # Output SQL
@@ -357,6 +358,11 @@ Examples:
         "--keep-pks",
         action="store_true",
         help="Keep original primary key values (default: remap auto-generated PKs)",
+    )
+    dump_group.add_argument(
+        "--graph",
+        action="store_true",
+        help="Display table relationship graph after dump completes",
     )
     dump_group.add_argument(
         "--truncate",
