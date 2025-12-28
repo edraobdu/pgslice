@@ -189,7 +189,8 @@ class REPL:
 
         try:
             # Use DumpService for the actual dump
-            service = DumpService(self.conn_manager, self.config, show_progress=False)
+            # REPL always writes to files, so progress bar is safe to show
+            service = DumpService(self.conn_manager, self.config, show_progress=True)
             result = service.dump(
                 table=table_name,
                 pk_values=pk_values,
