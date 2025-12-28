@@ -184,13 +184,21 @@ class REPL:
         pk_display = ", ".join(str(pk) for pk in pk_values)
         mode_display = "wide" if wide_mode else "strict"
         printy(
-            f"\n[c]Dumping {schema}.{table_name} with PK(s): {pk_display} ({mode_display} mode)@"
+            f"\n  [c]Dumping {schema}.{table_name} with PK(s): {pk_display} ({mode_display} mode)@\n"
         )
 
+        # Wide mode warning
+        if wide_mode:
+            printy(
+                "  [y]⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.@"
+            )
+            printy("  [y]   This may take longer and fetch more data.@\n")
+
         if timeframe_filters:
-            printy("\n[y]Truncate filters:@")
+            printy("  [y]Truncate filters:@")
             for tf in timeframe_filters:
-                printy(f"  - {tf}")
+                printy(f"    - {tf}")
+            printy("")  # Empty line after filters
 
         try:
             # Use DumpService for the actual dump
@@ -207,13 +215,13 @@ class REPL:
                 show_graph=show_graph,
             )
 
-            printy(f"\n[g]Found {result.record_count} related records@")
+            printy(f"\n  [g]✓ Found {result.record_count} related records@")
 
             # Output
             if output_file:
                 SQLWriter.write_to_file(result.sql_content, output_file)
                 printy(
-                    f"[g]Wrote {result.record_count} INSERT statements to {output_file}@"
+                    f"  [g]✓ Wrote {result.record_count} INSERT statements to {output_file}@\n"
                 )
             else:
                 # Use default output path
@@ -225,11 +233,11 @@ class REPL:
                 )
                 SQLWriter.write_to_file(result.sql_content, str(default_path))
                 printy(
-                    f"[g]Wrote {result.record_count} INSERT statements to {default_path}@"
+                    f"  [g]✓ Wrote {result.record_count} INSERT statements to {default_path}@\n"
                 )
 
         except DBReverseDumpError as e:
-            printy(f"[r]Error: {e}@")
+            printy(f"\n  [r]Error: {e}@\n")
         except Exception as e:
             logger.exception("Error during dump")
             printy(f"[r]Unexpected error: {e}@")

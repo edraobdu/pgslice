@@ -173,6 +173,14 @@ def run_cli_dump(
     # Show progress only if stderr is a TTY (not piped)
     show_progress = sys.stderr.isatty()
 
+    # Wide mode warning
+    if args.wide and show_progress:
+        sys.stderr.write(
+            "\n⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.\n"
+        )
+        sys.stderr.write("   This may take longer and fetch more data.\n\n")
+        sys.stderr.flush()
+
     # Create dump service
     service = DumpService(conn_manager, config, show_progress=show_progress)
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
+from printy import raw
+
 from ..graph.models import RecordData
 
 
@@ -138,10 +140,10 @@ class GraphRenderer:
             else:
                 return "(No records found)"
 
-        # 2. Build adjacency list (parent -> children)
+        # 2. Build adjacency list (bidirectional to show full traversal)
         children: dict[str, list[tuple[TableNode, TableEdge]]] = defaultdict(list)
         for edge in graph.edges:
-            # Find corresponding child node
+            # Find both child and parent nodes
             child_node = next(
                 (
                     n
@@ -150,15 +152,31 @@ class GraphRenderer:
                 ),
                 None,
             )
-            if child_node:
+            parent_node = next(
+                (
+                    n
+                    for n in graph.nodes
+                    if f"{n.schema_name}.{n.table_name}" == edge.target_table
+                ),
+                None,
+            )
+
+            if child_node and parent_node:
+                # Add child to parent's list (reverse FK: parent <- child)
                 children[edge.target_table].append((child_node, edge))
+
+                # Add parent to child's list (forward FK: child -> parent)
+                # This allows showing full traversal tree
+                children[edge.source_table].append((parent_node, edge))
 
         # 3. Render tree with DFS
         lines: list[str] = []
         visited: set[str] = set()
 
         for root in roots:
-            self._render_node(root, children, "", True, lines, visited, is_root=True)
+            self._render_node(
+                root, children, "", True, lines, visited, is_root=True, parent=None
+            )
 
         # Handle single table with no relationships
         if len(lines) == 1 and not children:
@@ -175,6 +193,7 @@ class GraphRenderer:
         lines: list[str],
         visited: set[str],
         is_root: bool = False,
+        parent: TableNode | None = None,
     ) -> None:
         """
         Recursively render node and its children.
@@ -187,39 +206,62 @@ class GraphRenderer:
             lines: Accumulator for output lines
             visited: Set of already visited nodes (for cycle detection)
             is_root: Whether this is a root node
+            parent: Parent node we came from (to avoid immediate back-references)
         """
         full_name = f"{node.schema_name}.{node.table_name}"
 
-        # Format current node
+        # Format current node with colors using printy
         if is_root:
-            # Root nodes don't have connectors
-            line = f"{node.table_name} ({node.record_count} records)"
+            # Root nodes: cyan (bold) table name + yellow count
+            line = raw(f"[cB]{node.table_name}@ [y]({node.record_count} records)@")
         else:
             connector = self.LAST if is_last else self.BRANCH
-            line = f"{prefix}{connector}{node.table_name} ({node.record_count} records)"
+            # Tree structure: dark connectors + cyan table name + yellow count
+            line = (
+                prefix
+                + raw(f"[n]{connector}@")
+                + raw(f"[c]{node.table_name}@ ")
+                + raw(f"[y]({node.record_count} records)@")
+            )
 
         # Check if already shown (cycle detection)
         if full_name in visited and not is_root:
-            line += " [shown above]"
+            line += raw(" [n][shown above]@")
             lines.append(line)
             return
 
         lines.append(line)
         visited.add(full_name)
 
-        # Render children
+        # Render children (filter out immediate parent to avoid back-reference)
         child_list = children.get(full_name, [])
+
+        # Filter out the parent we just came from
+        if parent:
+            parent_name = f"{parent.schema_name}.{parent.table_name}"
+            child_list = [
+                (child, edge)
+                for child, edge in child_list
+                if f"{child.schema_name}.{child.table_name}" != parent_name
+            ]
+
         for i, (child_node, _edge) in enumerate(child_list):
             is_last_child = i == len(child_list) - 1
 
-            # Update prefix for child
+            # Update prefix for child (with colored tree characters)
             if is_root:
                 child_prefix = ""
             elif is_last:
                 child_prefix = prefix + self.SPACE
             else:
-                child_prefix = prefix + self.PIPE
+                child_prefix = prefix + raw(f"[n]{self.PIPE}@")
 
             self._render_node(
-                child_node, children, child_prefix, is_last_child, lines, visited
+                child_node,
+                children,
+                child_prefix,
+                is_last_child,
+                lines,
+                visited,
+                parent=node,
             )
