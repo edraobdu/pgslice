@@ -159,6 +159,62 @@ pgslice> tables
 pgslice> describe "film"
 ```
 
+## CLI vs REPL: Output Behavior
+
+Understanding the difference between CLI and REPL modes:
+
+### CLI Mode (stdout by default)
+The CLI streams SQL to **stdout** by default, perfect for piping and scripting:
+
+```bash
+# Streams to stdout - redirect with >
+pgslice --table users --pks 42 > user_42.sql
+
+# Or use --output flag
+pgslice --table users --pks 42 --output user_42.sql
+
+# Pipe to other commands
+pgslice --table users --pks 42 | gzip > user_42.sql.gz
+```
+
+### REPL Mode (files by default)
+The REPL writes to **`~/.pgslice/dumps/`** by default when `--output` is not specified:
+
+```bash
+# In REPL: writes to ~/.pgslice/dumps/public_users_42.sql
+pgslice> dump "users" 42
+
+# Specify custom output path
+pgslice> dump "users" 42 --output /path/to/user.sql
+```
+
+### Same Operations, Different Modes
+
+| Operation | CLI | REPL |
+|-----------|-----|------|
+| **List tables** | `pgslice --tables` | `pgslice> tables` |
+| **Describe table** | `pgslice --describe users` | `pgslice> describe "users"` |
+| **Dump to stdout** | `pgslice --table users --pks 42` | N/A (REPL always writes to file) |
+| **Dump to file** | `pgslice --table users --pks 42 --output user.sql` | `pgslice> dump "users" 42 --output user.sql` |
+| **Dump (default)** | Stdout | `~/.pgslice/dumps/public_users_42.sql` |
+| **Multiple PKs** | `pgslice --table users --pks 1,2,3` | `pgslice> dump "users" 1,2,3` |
+| **Truncate filter** | `pgslice --table users --pks 42 --truncate "orders:2024-01-01:2024-12-31"` | `pgslice> dump "users" 42 --truncate "orders:2024-01-01:2024-12-31"` |
+| **Wide mode** | `pgslice --table users --pks 42 --wide` | `pgslice> dump "users" 42 --wide` |
+
+### When to Use Each Mode
+
+**Use CLI mode when:**
+- Piping output to other commands
+- Scripting and automation
+- Remote execution via SSH
+- One-off dumps
+
+**Use REPL mode when:**
+- Exploring database schema interactively
+- Running multiple dumps in a session
+- You prefer persistent file output
+- Testing different dump configurations
+
 ## Configuration
 
 Key environment variables (see `.env.example` for full reference):
