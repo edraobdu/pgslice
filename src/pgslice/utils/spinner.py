@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 
 class SpinnerAnimator:
@@ -46,3 +49,40 @@ class SpinnerAnimator:
         """Reset spinner to initial state."""
         self._current_idx = 0
         self._last_update = time.time()
+
+
+@contextmanager
+def animated_spinner(
+    spinner: SpinnerAnimator,
+    update_fn: Callable[[str], None],
+    base_text: str,
+    interval: float = 0.1,
+) -> Iterator[None]:
+    """
+    Context manager that animates spinner in background thread.
+
+    Args:
+        spinner: SpinnerAnimator instance
+        update_fn: Function to call with updated description (e.g., pbar.set_description)
+        base_text: Base description text (spinner appended)
+        interval: Update interval in seconds
+
+    Usage:
+        with animated_spinner(spinner, pbar.set_description, "Sorting dependencies"):
+            sorter.sort(records)  # Spinner animates during this
+    """
+    stop_event = threading.Event()
+
+    def animate() -> None:
+        while not stop_event.is_set():
+            update_fn(f"{base_text} {spinner.get_frame()}")
+            stop_event.wait(interval)
+
+    thread = threading.Thread(target=animate, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=0.5)
+        update_fn(f"{base_text} ✓")

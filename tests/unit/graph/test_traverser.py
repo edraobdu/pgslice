@@ -30,7 +30,12 @@ class TestRelationshipTraverser:
         cursor = MagicMock()
         cursor.execute = MagicMock()
         cursor.fetchone = MagicMock()
-        cursor.fetchall = MagicMock(return_value=[])
+        # Set up fetchall to return the same data as fetchone for batch compatibility
+        cursor.fetchall = MagicMock(
+            side_effect=lambda: [cursor.fetchone.return_value]
+            if cursor.fetchone.return_value
+            else []
+        )
         cursor.description = [("id",), ("name",)]
         return cursor
 
@@ -537,7 +542,7 @@ class TestIncomingFkTraversal(TestRelationshipTraverser):
         mock_introspector.get_table_metadata.return_value = users_table
         mock_cursor.fetchone.return_value = (1, "Alice")
 
-        results = traverser.traverse("users", "public", (1,))
+        results = traverser.traverse("users", 1, "public")
 
         # Should only find the user, not referencing orders
         assert len(results) == 1
@@ -631,7 +636,7 @@ class TestWideModeVsStrictMode(TestRelationshipTraverser):
         mock_introspector.get_table_metadata.return_value = users_table
         mock_cursor.fetchone.return_value = (1, "Employee", 2)
 
-        results = traverser.traverse("users", "public", (1,))
+        results = traverser.traverse("users", 1, "public")
 
         # In strict mode, should skip self-referencing FK
         assert len(results) == 1

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Callable
 from typing import Any
 
 import psycopg
@@ -32,7 +31,7 @@ class RelationshipTraverser:
         visited_tracker: VisitedTracker,
         timeframe_filters: list[TimeframeFilter] | None = None,
         wide_mode: bool = False,
-        progress_callback: Callable[[int], None] | None = None,
+        fetch_batch_size: int = 500,
     ) -> None:
         """
         Initialize relationship traverser.
@@ -45,7 +44,8 @@ class RelationshipTraverser:
             wide_mode: If True, follow incoming FKs from all records (wide/exploratory).
                       If False (default), only follow incoming FKs from starting records
                       and records reached via incoming FKs (strict mode, prevents fan-out).
-            progress_callback: Optional callback invoked with record count after each fetch
+            fetch_batch_size: Number of records to fetch in a single batch query (default: 500).
+                            Higher values reduce database round-trips but increase memory usage.
         """
         self.conn = connection
         self.introspector = schema_introspector
@@ -53,7 +53,7 @@ class RelationshipTraverser:
         self.table_cache: dict[str, Table] = {}
         self.timeframe_filters = {f.table_name: f for f in (timeframe_filters or [])}
         self.wide_mode = wide_mode
-        self.progress_callback = progress_callback
+        self.fetch_batch_size = fetch_batch_size
 
     def traverse(
         self,
@@ -63,18 +63,17 @@ class RelationshipTraverser:
         max_depth: int | None = None,
     ) -> set[RecordData]:
         """
-        Traverse relationships from a starting record.
+        Traverse relationships from a starting record using batch fetching.
 
         Algorithm:
         1. Start with initial record (table + PK)
-        2. Use BFS with queue of (RecordIdentifier, depth)
-        3. For each record:
-           - Skip if already visited
-           - Mark as visited
-           - Fetch record data
-           - Follow outgoing FKs (forward relationships)
-           - Follow incoming FKs (reverse relationships)
-        4. Continue until queue empty
+        2. Use BFS with queue of (RecordIdentifier, depth, follow_incoming_fks)
+        3. Collect records at same depth into batches (up to fetch_batch_size)
+        4. For each batch:
+           - Batch fetch all records
+           - Process outgoing FKs for all records in batch
+           - Batch process incoming FKs
+        5. Continue until queue empty
 
         Args:
             table_name: Starting table name
@@ -89,101 +88,149 @@ class RelationshipTraverser:
             RecordNotFoundError: If starting record doesn't exist
         """
         start_id = self._create_record_identifier(schema, table_name, (pk_value,))
-        # Queue now tracks: (record_id, depth, follow_incoming_fks)
-        # follow_incoming_fks=True for starting records and records reached via incoming FKs
-        # follow_incoming_fks=False for records reached via outgoing FKs (dependencies)
         queue: deque[tuple[RecordIdentifier, int, bool]] = deque([(start_id, 0, True)])
         results: set[RecordData] = set()
 
         logger.info(f"Starting traversal from {start_id}")
 
         while queue:
-            record_id, depth, follow_incoming_fks = queue.popleft()
+            # Collect batch: all records at current depth (up to batch_size)
+            current_depth = queue[0][1] if queue else 0
+            batch: list[tuple[RecordIdentifier, bool]] = []
 
-            # Check depth limit
-            if max_depth is not None and depth > max_depth:
-                logger.debug(f"Skipping {record_id}: depth {depth} > max {max_depth}")
+            while queue and len(batch) < self.fetch_batch_size:
+                record_id, depth, follow_incoming_fks = queue.popleft()
+
+                # If depth changed, put it back and process current batch
+                if depth != current_depth:
+                    queue.appendleft((record_id, depth, follow_incoming_fks))
+                    break
+
+                # Check depth limit
+                if max_depth is not None and depth > max_depth:
+                    logger.debug(
+                        f"Skipping {record_id}: depth {depth} > max {max_depth}"
+                    )
+                    continue
+
+                # Skip if already visited
+                if self.visited.is_visited(record_id):
+                    logger.debug(f"Skipping {record_id}: already visited")
+                    continue
+
+                # Mark as visited BEFORE fetching
+                self.visited.mark_visited(record_id)
+                batch.append((record_id, follow_incoming_fks))
+
+            # Process batch
+            if not batch:
                 continue
 
-            # Skip if already visited
-            if self.visited.is_visited(record_id):
-                logger.debug(f"Skipping {record_id}: already visited")
-                continue
-
-            # Mark as visited BEFORE fetching to prevent re-queueing
-            self.visited.mark_visited(record_id)
-
-            # Fetch record data
+            # Batch fetch all records
+            record_ids = [rid for rid, _ in batch]
             try:
-                record_data = self._fetch_record(record_id)
-            except RecordNotFoundError:
-                logger.warning(f"Record not found: {record_id}")
-                continue
+                fetched_records = self._fetch_records_batch(record_ids)
+            except Exception as e:
+                logger.error(f"Error batch fetching records: {e}")
+                # Fall back to individual fetches
+                fetched_records = {}
+                for record_id in record_ids:
+                    try:
+                        fetched_records[record_id] = self._fetch_record(record_id)
+                    except RecordNotFoundError:
+                        logger.warning(f"Record not found: {record_id}")
 
-            results.add(record_data)
-            logger.debug(
-                f"Fetched {record_id} at depth {depth} ({len(results)} total records)"
-            )
+            # Process each fetched record
+            for record_id, _ in batch:
+                if record_id not in fetched_records:
+                    continue
 
-            # Invoke progress callback with current record count
-            if self.progress_callback:
-                self.progress_callback(len(results))
+                record_data = fetched_records[record_id]
+                results.add(record_data)
+                logger.debug(
+                    f"Fetched {record_id} at depth {current_depth} ({len(results)} total)"
+                )
 
-            # Get table metadata
-            table = self._get_table_metadata(
-                record_id.schema_name, record_id.table_name
-            )
+                # Get table metadata
+                table = self._get_table_metadata(
+                    record_id.schema_name, record_id.table_name
+                )
 
-            # Traverse outgoing FKs (forward relationships)
-            for fk in table.foreign_keys_outgoing:
-                target_id = self._resolve_foreign_key_target(record_data, fk)
-                if target_id:
-                    # ALWAYS add dependency (even if target already visited)
-                    # This ensures correct SQL ordering when inserting records
-                    record_data.dependencies.add(target_id)
-                    logger.debug(
-                        f"  -> Dependency: {record_data.identifier} depends on {target_id}"
-                    )
+                # Traverse outgoing FKs (forward relationships)
+                for fk in table.foreign_keys_outgoing:
+                    target_id = self._resolve_foreign_key_target(record_data, fk)
+                    if target_id:
+                        # ALWAYS add dependency
+                        record_data.dependencies.add(target_id)
+                        logger.debug(
+                            f"  -> Dependency: {record_data.identifier} depends on {target_id}"
+                        )
 
-                    # Only traverse if not visited
-                    # In strict mode: dependencies should NOT follow incoming FKs (prevents fan-out)
-                    # In wide mode: all records can follow incoming FKs
-                    if not self.visited.is_visited(target_id):
-                        follow_incoming = self.wide_mode
-                        queue.append((target_id, depth + 1, follow_incoming))
-                        logger.debug(f"  -> Following outgoing FK to {target_id}")
+                        # Only traverse if not visited
+                        if not self.visited.is_visited(target_id):
+                            follow_incoming = self.wide_mode
+                            queue.append(
+                                (target_id, current_depth + 1, follow_incoming)
+                            )
+                            logger.debug(f"  -> Following outgoing FK to {target_id}")
 
-            # Traverse incoming FKs (reverse relationships)
-            # Only follow incoming FKs if this record allows it
-            if follow_incoming_fks:
+            # Process incoming FKs for batch (using batch lookup)
+            # Group by FK to minimize queries
+            incoming_fk_lookups: dict[Any, list[tuple[RecordIdentifier, bool]]] = {}
+            for record_id, follow_incoming_fks in batch:
+                if record_id not in fetched_records or not follow_incoming_fks:
+                    continue
+
+                table = self._get_table_metadata(
+                    record_id.schema_name, record_id.table_name
+                )
+
                 for fk in table.foreign_keys_incoming:
-                    logger.debug(
-                        f"  <- Processing incoming FK: {fk.source_table}, wide_mode={self.wide_mode}"
-                    )
-                    # In strict mode, skip self-referencing FKs to prevent sibling expansion
-                    # Self-referencing FKs like users.manager_id -> users.id would find peers/siblings
+                    # Skip self-referencing FKs in strict mode
                     if not self.wide_mode:
                         source_schema, source_table = self._parse_table_name(
                             fk.source_table
-                        )
-                        logger.debug(
-                            f"  <- Checking FK: {fk.source_table} (parsed: {source_schema}.{source_table}) vs current: {record_id.schema_name}.{record_id.table_name}"
                         )
                         if (
                             source_schema == record_id.schema_name
                             and source_table == record_id.table_name
                         ):
                             logger.debug(
-                                f"  <- Skipping self-referencing FK from {source_schema}.{source_table} (strict mode)"
+                                "  <- Skipping self-referencing FK (strict mode)"
                             )
                             continue
 
-                    source_records = self._find_referencing_records(record_id, fk)
-                    for source_id in source_records:
-                        if not self.visited.is_visited(source_id):
-                            # Records reached via incoming FKs CAN follow incoming FKs
-                            queue.append((source_id, depth + 1, True))
-                            logger.debug(f"  <- Following incoming FK from {source_id}")
+                    # Group records by FK for batch lookup
+                    fk_key = (fk.source_table, fk.source_column)
+                    if fk_key not in incoming_fk_lookups:
+                        incoming_fk_lookups[fk_key] = []
+                    incoming_fk_lookups[fk_key].append((record_id, follow_incoming_fks))
+
+            # Batch process incoming FKs
+            for (source_table, source_column), targets in incoming_fk_lookups.items():
+                # Reconstruct FK object for batch lookup
+                fk_obj = type(
+                    "FK",
+                    (),
+                    {"source_table": source_table, "source_column": source_column},
+                )()
+                target_ids = [tid for tid, _ in targets]
+
+                try:
+                    referencing_map = self._find_referencing_records_batch(
+                        target_ids, fk_obj
+                    )
+
+                    for target_id in target_ids:
+                        source_records = referencing_map.get(target_id, [])
+                        for source_id in source_records:
+                            if not self.visited.is_visited(source_id):
+                                queue.append((source_id, current_depth + 1, True))
+                                logger.debug(
+                                    f"  <- Following incoming FK from {source_id}"
+                                )
+                except Exception as e:
+                    logger.error(f"Error in batch FK lookup: {e}")
 
         logger.info(f"Traversal complete: {len(results)} records found")
         return results
@@ -217,10 +264,6 @@ class RelationshipTraverser:
         for pk_value in pk_values:
             records = self.traverse(table_name, pk_value, schema, max_depth)
             all_records.update(records)
-
-        # Final progress callback with total unique records
-        if self.progress_callback:
-            self.progress_callback(len(all_records))
 
         logger.info(
             f"Multi-traversal complete: {len(all_records)} unique records found"
@@ -280,6 +323,74 @@ class RelationshipTraverser:
             data = dict(zip(columns, row, strict=False))
 
         return RecordData(identifier=record_id, data=data)
+
+    def _fetch_records_batch(
+        self, record_ids: list[RecordIdentifier]
+    ) -> dict[RecordIdentifier, RecordData]:
+        """
+        Fetch multiple records in a single query using IN clause.
+        Groups records by table for efficient batching.
+
+        Args:
+            record_ids: List of record identifiers to fetch
+
+        Returns:
+            Dictionary mapping RecordIdentifier to RecordData
+        """
+        if not record_ids:
+            return {}
+
+        results: dict[RecordIdentifier, RecordData] = {}
+
+        # Group by (schema, table)
+        by_table: dict[tuple[str, str], list[RecordIdentifier]] = {}
+        for record_id in record_ids:
+            key = (record_id.schema_name, record_id.table_name)
+            by_table.setdefault(key, []).append(record_id)
+
+        # Fetch each table's records in batch
+        for (schema, table), table_record_ids in by_table.items():
+            table_metadata = self._get_table_metadata(schema, table)
+
+            if not table_metadata.primary_keys:
+                logger.warning(f"Table {schema}.{table} has no primary key, skipping")
+                continue
+
+            # Build WHERE clause: WHERE id IN (1, 2, 3)
+            pk_col = table_metadata.primary_keys[0]
+            pk_values = [rid.pk_values[0] for rid in table_record_ids]
+            placeholders = ", ".join(["%s"] * len(pk_values))
+
+            # Apply timeframe filter if applicable
+            timeframe_clause = ""
+            params: list[Any] = pk_values.copy()
+
+            if table in self.timeframe_filters:
+                filter_config = self.timeframe_filters[table]
+                timeframe_clause = (
+                    f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
+                )
+                params.extend([filter_config.start_date, filter_config.end_date])
+
+            query = f"""
+                SELECT * FROM "{schema}"."{table}"
+                WHERE "{pk_col}" IN ({placeholders}){timeframe_clause}
+            """
+
+            with self.conn.cursor() as cur:
+                cur.execute(query, params)
+                rows = cur.fetchall()
+                columns = [desc[0] for desc in (cur.description or [])]
+
+                for row in rows:
+                    data = dict(zip(columns, row, strict=False))
+                    pk_value = data[pk_col]
+                    record_id = self._create_record_identifier(
+                        schema, table, (pk_value,)
+                    )
+                    results[record_id] = RecordData(identifier=record_id, data=data)
+
+        return results
 
     def _resolve_foreign_key_target(
         self, record: RecordData, fk: Any
@@ -375,6 +486,81 @@ class RelationshipTraverser:
                 f"Found {len(results)} records in {schema}.{table} "
                 f"referencing {target_id}: {[r.pk_values for r in results]}"
             )
+
+        return results
+
+    def _find_referencing_records_batch(
+        self, target_ids: list[RecordIdentifier], fk: Any
+    ) -> dict[RecordIdentifier, list[RecordIdentifier]]:
+        """
+        Find all records referencing multiple targets via single FK using IN clause.
+
+        Args:
+            target_ids: List of target record identifiers being referenced
+            fk: ForeignKey object
+
+        Returns:
+            Dictionary mapping each target_id to list of RecordIdentifiers referencing it
+        """
+        if not target_ids:
+            return {}
+
+        # Parse source table
+        schema, table = self._parse_table_name(fk.source_table)
+
+        # Get primary keys for source table
+        source_table = self._get_table_metadata(schema, table)
+        if not source_table.primary_keys:
+            logger.warning(f"Table {schema}.{table} has no primary key, skipping")
+            return {}
+
+        # Get target PK values
+        target_pk_values = [tid.pk_values[0] for tid in target_ids]
+
+        # Build query with IN clause
+        pk_columns = ", ".join(f'"{pk}"' for pk in source_table.primary_keys)
+        placeholders = ", ".join(["%s"] * len(target_pk_values))
+
+        # Apply timeframe filter if applicable
+        timeframe_clause = ""
+        params: list[Any] = target_pk_values.copy()
+
+        if table in self.timeframe_filters:
+            filter_config = self.timeframe_filters[table]
+            timeframe_clause = f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
+            params.extend([filter_config.start_date, filter_config.end_date])
+
+        # Include FK column to map back to targets
+        query = f"""
+            SELECT {pk_columns}, "{fk.source_column}"
+            FROM "{schema}"."{table}"
+            WHERE "{fk.source_column}" IN ({placeholders}){timeframe_clause}
+        """
+
+        # Initialize results dict with empty lists for all targets
+        results: dict[RecordIdentifier, list[RecordIdentifier]] = {
+            tid: [] for tid in target_ids
+        }
+
+        with self.conn.cursor() as cur:
+            cur.execute(query, params)
+            rows = cur.fetchall()
+
+            for row in rows:
+                fk_value = row[-1]  # Last column is FK value
+                pk_values = row[:-1]  # Rest are PK values
+
+                source_id = self._create_record_identifier(
+                    schema,
+                    table,
+                    (pk_values[0],) if len(pk_values) == 1 else tuple(pk_values),
+                )
+
+                # Map to correct target
+                for target_id in target_ids:
+                    if str(target_id.pk_values[0]) == str(fk_value):
+                        results[target_id].append(source_id)
+                        break
 
         return results
 

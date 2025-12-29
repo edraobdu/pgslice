@@ -32,7 +32,7 @@ Extract only what you need while maintaining referential integrity.
 
 ## Features
 
-- ✅ **CLI-first design**: Stream SQL to stdout for easy piping and scripting
+- ✅ **CLI-first design**: Dumps always saved to files with visible progress (matches REPL behavior)
 - ✅ **Bidirectional FK traversal**: Follows relationships in both directions (forward and reverse)
 - ✅ **Circular relationship handling**: Prevents infinite loops with visited tracking
 - ✅ **Multiple records**: Extract multiple records in one operation
@@ -79,6 +79,65 @@ docker pull edraobdu/pgslice:0.1.1
 docker pull --platform linux/amd64 edraobdu/pgslice:latest
 ```
 
+#### Connecting to Localhost Database
+
+When your PostgreSQL database runs on your host machine, use `--network host` (Linux) or `host.docker.internal` (Mac/Windows):
+
+```bash
+# Linux: Use host networking
+docker run --rm -it \
+  --network host \
+  -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
+  -e PGPASSWORD=your_password \
+  edraobdu/pgslice:latest \
+  pgslice --host localhost --database your_db --dump users --pks 42
+
+# Mac/Windows: Use special hostname
+docker run --rm -it \
+  -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
+  -e PGPASSWORD=your_password \
+  edraobdu/pgslice:latest \
+  pgslice --host host.docker.internal --database your_db --dump users --pks 42
+```
+
+See [DOCKER_USAGE.md](DOCKER_USAGE.md#connecting-to-localhost-database) for more connection options.
+
+#### Docker Volume Permissions
+
+The pgslice container runs as user `pgslice` (UID 1000) for security. When mounting local directories as volumes, you may encounter permission issues.
+
+**The entrypoint script automatically fixes permissions** on mounted volumes. However, if you still encounter issues:
+
+```bash
+# Fix permissions on host before mounting
+sudo chown -R 1000:1000 ./dumps
+
+# Then run normally
+docker run --rm -it \
+  -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
+  edraobdu/pgslice:latest \
+  pgslice --host your.db.host --database your_db --dump users --pks 42
+```
+
+**Alternative:** Run container as your user:
+```bash
+docker run --rm -it \
+  -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
+  --user $(id -u):$(id -g) \
+  edraobdu/pgslice:latest \
+  pgslice --host your.db.host --database your_db --dump users --pks 42
+```
+
+**For remote servers:**
+```bash
+# Run dump on remote server
+ssh user@remote-server "docker run --rm -v /tmp/dumps:/home/pgslice/.pgslice/dumps \
+  edraobdu/pgslice:latest pgslice --dump users --pks 42"
+
+# Copy file locally
+scp user@remote-server:/tmp/dumps/users_42_*.sql ./
+```
+
 ### From Source (Development)
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions.
@@ -87,40 +146,40 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions
 
 ### CLI Mode
 
-The CLI mode streams SQL to stdout by default, making it easy to pipe or redirect output:
+Dumps are always saved to files with visible progress indicators (helpful for large datasets):
 
 ```bash
-# Basic dump to stdout (pipe to file)
-PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 42 > user_42.sql
+# Basic dump (auto-generates filename like: public_users_42_TIMESTAMP.sql)
+PGPASSWORD=xxx pgslice --host localhost --database mydb --dump users --pks 42
 
 # Multiple records
-PGPASSWORD=xxx pgslice --host localhost --database mydb --table users --pks 1,2,3 > users.sql
+PGPASSWORD=xxx pgslice --host localhost --database mydb --dump users --pks 1,2,3
 
-# Output directly to file with --output flag
-pgslice --host localhost --database mydb --table users --pks 42 --output user_42.sql
+# Specify output file path
+pgslice --host localhost --database mydb --dump users --pks 42 --output user_42.sql
 
 # Dump by timeframe (instead of PKs) - filters main table by date range
-pgslice --host localhost --database mydb --table orders \
-    --timeframe "created_at:2024-01-01:2024-12-31" > orders_2024.sql
+pgslice --host localhost --database mydb --dump orders \
+    --timeframe "created_at:2024-01-01:2024-12-31" --output orders_2024.sql
 
 # Wide mode: follow all relationships including self-referencing FKs
 # Be cautious - this can result in larger datasets
-pgslice --host localhost --database mydb --table customer --pks 42 --wide > customer.sql
+pgslice --host localhost --database mydb --dump customer --pks 42 --wide
 
 # Keep original primary keys (no remapping)
-pgslice --host localhost --database mydb --table film --pks 1 --keep-pks > film.sql
+pgslice --host localhost --database mydb --dump film --pks 1 --keep-pks
 
 # Generate self-contained SQL with DDL statements
 # Includes CREATE DATABASE/SCHEMA/TABLE statements
-pgslice --host localhost --database mydb --table film --pks 1 --create-schema > film_complete.sql
+pgslice --host localhost --database mydb --dump film --pks 1 --create-schema
 
 # Apply truncate filter to limit related tables by date range
-pgslice --host localhost --database mydb --table customer --pks 42 \
-    --truncate "rental:rental_date:2024-01-01:2024-12-31" > customer.sql
+pgslice --host localhost --database mydb --dump customer --pks 42 \
+    --truncate "rental:rental_date:2024-01-01:2024-12-31"
 
 # Enable debug logging (writes to stderr)
-pgslice --host localhost --database mydb --table users --pks 42 \
-    --log-level DEBUG 2>debug.log > output.sql
+pgslice --host localhost --database mydb --dump users --pks 42 \
+    --log-level DEBUG 2>debug.log
 ```
 
 ### Schema Exploration
@@ -140,12 +199,12 @@ Run pgslice on a remote server and capture output locally:
 ```bash
 # Execute on remote server, save output locally
 ssh remote.server.com "PGPASSWORD=xxx pgslice --host db.internal --database mydb \
-    --table users --pks 1 --create-schema" > local_dump.sql
+    --dump users --pks 1 --create-schema" > local_dump.sql
 
 # With SSH tunnel for database access
 ssh -f -N -L 5433:db.internal:5432 bastion.example.com
 PGPASSWORD=xxx pgslice --host localhost --port 5433 --database mydb \
-    --table users --pks 42 > user.sql
+    --dump users --pks 42 > user.sql
 ```
 
 ### Interactive REPL
@@ -163,30 +222,29 @@ pgslice> describe "film"
 
 Understanding the difference between CLI and REPL modes:
 
-### CLI Mode (stdout by default)
-The CLI streams SQL to **stdout** by default, perfect for piping and scripting:
+### CLI Mode (files with progress)
+The CLI writes to files and shows progress bars (helpful for large datasets):
 
 ```bash
-# Streams to stdout - redirect with >
-pgslice --table users --pks 42 > user_42.sql
+# Writes to ~/.pgslice/dumps/public_users_42_TIMESTAMP.sql
+pgslice --dump users --pks 42
 
-# Or use --output flag
-pgslice --table users --pks 42 --output user_42.sql
-
-# Pipe to other commands
-pgslice --table users --pks 42 | gzip > user_42.sql.gz
+# Specify output file
+pgslice --dump users --pks 42 --output user_42.sql
 ```
 
-### REPL Mode (files by default)
-The REPL writes to **`~/.pgslice/dumps/`** by default when `--output` is not specified:
+### REPL Mode (same behavior)
+The REPL also writes to **`~/.pgslice/dumps/`** by default:
 
 ```bash
-# In REPL: writes to ~/.pgslice/dumps/public_users_42.sql
+# Writes to ~/.pgslice/dumps/public_users_42_TIMESTAMP.sql
 pgslice> dump "users" 42
 
 # Specify custom output path
 pgslice> dump "users" 42 --output /path/to/user.sql
 ```
+
+Both modes now behave identically - always writing to files with visible progress.
 
 ### Same Operations, Different Modes
 
@@ -194,12 +252,12 @@ pgslice> dump "users" 42 --output /path/to/user.sql
 |-----------|-----|------|
 | **List tables** | `pgslice --tables` | `pgslice> tables` |
 | **Describe table** | `pgslice --describe users` | `pgslice> describe "users"` |
-| **Dump to stdout** | `pgslice --table users --pks 42` | N/A (REPL always writes to file) |
-| **Dump to file** | `pgslice --table users --pks 42 --output user.sql` | `pgslice> dump "users" 42 --output user.sql` |
-| **Dump (default)** | Stdout | `~/.pgslice/dumps/public_users_42.sql` |
-| **Multiple PKs** | `pgslice --table users --pks 1,2,3` | `pgslice> dump "users" 1,2,3` |
-| **Truncate filter** | `pgslice --table users --pks 42 --truncate "orders:2024-01-01:2024-12-31"` | `pgslice> dump "users" 42 --truncate "orders:2024-01-01:2024-12-31"` |
-| **Wide mode** | `pgslice --table users --pks 42 --wide` | `pgslice> dump "users" 42 --wide` |
+| **Dump (auto-named)** | `pgslice --dump users --pks 42` | `pgslice> dump "users" 42` |
+| **Dump to file** | `pgslice --dump users --pks 42 --output user.sql` | `pgslice> dump "users" 42 --output user.sql` |
+| **Dump (default path)** | `~/.pgslice/dumps/public_users_42_TIMESTAMP.sql` | `~/.pgslice/dumps/public_users_42_TIMESTAMP.sql` |
+| **Multiple PKs** | `pgslice --dump users --pks 1,2,3` | `pgslice> dump "users" 1,2,3` |
+| **Truncate filter** | `pgslice --dump users --pks 42 --truncate "orders:2024-01-01:2024-12-31"` | `pgslice> dump "users" 42 --truncate "orders:2024-01-01:2024-12-31"` |
+| **Wide mode** | `pgslice --dump users --pks 42 --wide` | `pgslice> dump "users" 42 --wide` |
 
 ### When to Use Each Mode
 

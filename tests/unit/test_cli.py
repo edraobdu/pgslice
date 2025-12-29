@@ -320,7 +320,7 @@ class TestCLIDumpMode:
                     "test",
                     "--database",
                     "test",
-                    "--table",
+                    "--dump",
                     "users",
                 ],
             ),
@@ -360,7 +360,7 @@ class TestCLIDumpMode:
                     "test",
                     "--database",
                     "test",
-                    "--table",
+                    "--dump",
                     "users",
                     "--pks",
                     "1",
@@ -381,6 +381,7 @@ class TestCLIDumpMode:
             mock_config.cache.enabled = False
             mock_config.connection_ttl_minutes = 30
             mock_config.create_schema = False
+            mock_config.output_dir = Path("/tmp")
             mock_load.return_value = mock_config
 
             mock_cm_instance = MagicMock()
@@ -389,6 +390,9 @@ class TestCLIDumpMode:
             mock_service_instance = MagicMock()
             mock_service_instance.dump.return_value = mock_result
             mock_dump_service.return_value = mock_service_instance
+
+            # Mock get_default_output_path for auto-generated filename
+            mock_writer.get_default_output_path.return_value = Path("/tmp/test.sql")
 
             exit_code = main()
             assert exit_code == 0
@@ -399,8 +403,8 @@ class TestCLIDumpMode:
             assert call_kwargs["table"] == "users"
             assert call_kwargs["pk_values"] == ["1"]
 
-            # SQL should be written to stdout (no --output flag)
-            mock_writer.write_to_stdout.assert_called_once_with(mock_result.sql_content)
+            # SQL should be written to file (always writes to files now)
+            mock_writer.write_to_file.assert_called_once()
 
     def test_cli_dump_with_output_file(self, tmp_path: Path) -> None:
         """Should write to file when --output is specified."""
@@ -425,7 +429,7 @@ class TestCLIDumpMode:
                     "test",
                     "--database",
                     "test",
-                    "--table",
+                    "--dump",
                     "users",
                     "--pks",
                     "1",
@@ -448,6 +452,7 @@ class TestCLIDumpMode:
             mock_config.cache.enabled = False
             mock_config.connection_ttl_minutes = 30
             mock_config.create_schema = False
+            mock_config.output_dir = tmp_path
             mock_load.return_value = mock_config
 
             mock_cm_instance = MagicMock()
@@ -487,7 +492,7 @@ class TestCLIDumpMode:
                     "test",
                     "--database",
                     "test",
-                    "--table",
+                    "--dump",
                     "users",
                     "--pks",
                     "1,2,3",
@@ -502,7 +507,7 @@ class TestCLIDumpMode:
             patch("pgslice.cli.SecureCredentials"),
             patch("pgslice.cli.ConnectionManager") as mock_cm,
             patch("pgslice.cli.DumpService") as mock_dump_service,
-            patch("pgslice.cli.SQLWriter"),
+            patch("pgslice.cli.SQLWriter") as mock_writer,
         ):
             mock_config = MagicMock()
             mock_config.db.host = "localhost"
@@ -513,6 +518,7 @@ class TestCLIDumpMode:
             mock_config.cache.enabled = False
             mock_config.connection_ttl_minutes = 30
             mock_config.create_schema = False
+            mock_config.output_dir = Path("/tmp")
             mock_load.return_value = mock_config
 
             mock_cm_instance = MagicMock()
@@ -521,6 +527,9 @@ class TestCLIDumpMode:
             mock_service_instance = MagicMock()
             mock_service_instance.dump.return_value = mock_result
             mock_dump_service.return_value = mock_service_instance
+
+            # Mock get_default_output_path for auto-generated filename
+            mock_writer.get_default_output_path.return_value = Path("/tmp/test.sql")
 
             exit_code = main()
             assert exit_code == 0
@@ -596,7 +605,7 @@ class TestMainTableTimeframeCLI:
                 "argv",
                 [
                     "pgslice",
-                    "--table",
+                    "--dump",
                     "users",
                     "--pks",
                     "1",
@@ -635,7 +644,7 @@ class TestMainTableTimeframeCLI:
                     "test",
                     "--database",
                     "test",
-                    "--table",
+                    "--dump",
                     "users",
                     "--timeframe",
                     "created_at:2024-01-01:2024-12-31",
@@ -646,7 +655,7 @@ class TestMainTableTimeframeCLI:
             patch("pgslice.cli.ConnectionManager") as mock_cm,
             patch("pgslice.cli.SchemaIntrospector") as mock_introspector,
             patch("pgslice.cli.DumpService") as mock_dump_service,
-            patch("pgslice.cli.SQLWriter"),
+            patch("pgslice.cli.SQLWriter") as mock_writer,
             patch("pgslice.cli.printy"),
         ):
             mock_config = MagicMock()
@@ -658,6 +667,7 @@ class TestMainTableTimeframeCLI:
             mock_config.cache.enabled = False
             mock_config.connection_ttl_minutes = 30
             mock_config.create_schema = False
+            mock_config.output_dir = Path("/tmp")
             mock_load.return_value = mock_config
 
             mock_cm_instance = MagicMock()
@@ -675,6 +685,9 @@ class TestMainTableTimeframeCLI:
             mock_service_instance = MagicMock()
             mock_service_instance.dump.return_value = mock_result
             mock_dump_service.return_value = mock_service_instance
+
+            # Mock get_default_output_path for auto-generated filename
+            mock_writer.get_default_output_path.return_value = Path("/tmp/test.sql")
 
             exit_code = main()
             assert exit_code == 0
@@ -701,7 +714,7 @@ class TestMainTableTimeframeCLI:
                     "test",
                     "--database",
                     "test",
-                    "--table",
+                    "--dump",
                     "users",
                     "--timeframe",
                     "created_at:2024-01-01:2024-12-31",
@@ -722,6 +735,7 @@ class TestMainTableTimeframeCLI:
             mock_config.cache.enabled = False
             mock_config.connection_ttl_minutes = 30
             mock_config.create_schema = False
+            mock_config.output_dir = Path("/tmp")
             mock_load.return_value = mock_config
 
             mock_cm_instance = MagicMock()
