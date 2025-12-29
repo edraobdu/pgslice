@@ -19,6 +19,8 @@
 
 Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
+![PgSlice Example](.github/pgslie-example.gif)
+
 ## Overview
 
 `pgslice` extracts a specific database record and **ALL** its related records by following foreign key relationships bidirectionally. Perfect for:
@@ -57,6 +59,11 @@ pip install pgslice
 
 # Or with uv
 uv tool install pgslice
+
+# check instalation
+pgslice --version
+# or
+uv run pgslice --version
 ```
 
 ### From Docker Hub
@@ -65,12 +72,12 @@ uv tool install pgslice
 # Pull the image
 docker pull edraobdu/pgslice:latest
 
-# Run pgslice
+# Check instalation
 docker run --rm -it \
   -v $(pwd)/dumps:/home/pgslice/.pgslice/dumps \
   -e PGPASSWORD=your_password \
   edraobdu/pgslice:latest \
-  pgslice --host your.db.host --port 5432 --user your_user --database your_db
+  pgslice --version
 
 # Pin to specific version
 docker pull edraobdu/pgslice:0.1.1
@@ -128,16 +135,6 @@ docker run --rm -it \
   pgslice --host your.db.host --database your_db --dump users --pks 42
 ```
 
-**For remote servers:**
-```bash
-# Run dump on remote server
-ssh user@remote-server "docker run --rm -v /tmp/dumps:/home/pgslice/.pgslice/dumps \
-  edraobdu/pgslice:latest pgslice --dump users --pks 42"
-
-# Copy file locally
-scp user@remote-server:/tmp/dumps/users_42_*.sql ./
-```
-
 ### From Source (Development)
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for detailed development setup instructions.
@@ -192,86 +189,16 @@ pgslice --host localhost --database mydb --tables
 pgslice --host localhost --database mydb --describe users
 ```
 
-### SSH Remote Execution
-
-Run pgslice on a remote server and capture output locally:
-
-```bash
-# Execute on remote server, save output locally
-ssh remote.server.com "PGPASSWORD=xxx pgslice --host db.internal --database mydb \
-    --dump users --pks 1 --create-schema" > local_dump.sql
-
-# With SSH tunnel for database access
-ssh -f -N -L 5433:db.internal:5432 bastion.example.com
-PGPASSWORD=xxx pgslice --host localhost --port 5433 --database mydb \
-    --dump users --pks 42 > user.sql
-```
-
 ### Interactive REPL
 
 ```bash
 # Start interactive REPL
-pgslice --host localhost --database mydb
+PGPASSWORD=mypassword pgslice --host localhost --database mydb --user myuser --port 5432
 
-pgslice> dump "film" 1 --output film_1.sql
+pgslice> dump film 1 --output film_1.sql
 pgslice> tables
-pgslice> describe "film"
+pgslice> describe film
 ```
-
-## CLI vs REPL: Output Behavior
-
-Understanding the difference between CLI and REPL modes:
-
-### CLI Mode (files with progress)
-The CLI writes to files and shows progress bars (helpful for large datasets):
-
-```bash
-# Writes to ~/.pgslice/dumps/public_users_42_TIMESTAMP.sql
-pgslice --dump users --pks 42
-
-# Specify output file
-pgslice --dump users --pks 42 --output user_42.sql
-```
-
-### REPL Mode (same behavior)
-The REPL also writes to **`~/.pgslice/dumps/`** by default:
-
-```bash
-# Writes to ~/.pgslice/dumps/public_users_42_TIMESTAMP.sql
-pgslice> dump "users" 42
-
-# Specify custom output path
-pgslice> dump "users" 42 --output /path/to/user.sql
-```
-
-Both modes now behave identically - always writing to files with visible progress.
-
-### Same Operations, Different Modes
-
-| Operation | CLI | REPL |
-|-----------|-----|------|
-| **List tables** | `pgslice --tables` | `pgslice> tables` |
-| **Describe table** | `pgslice --describe users` | `pgslice> describe "users"` |
-| **Dump (auto-named)** | `pgslice --dump users --pks 42` | `pgslice> dump "users" 42` |
-| **Dump to file** | `pgslice --dump users --pks 42 --output user.sql` | `pgslice> dump "users" 42 --output user.sql` |
-| **Dump (default path)** | `~/.pgslice/dumps/public_users_42_TIMESTAMP.sql` | `~/.pgslice/dumps/public_users_42_TIMESTAMP.sql` |
-| **Multiple PKs** | `pgslice --dump users --pks 1,2,3` | `pgslice> dump "users" 1,2,3` |
-| **Truncate filter** | `pgslice --dump users --pks 42 --truncate "orders:2024-01-01:2024-12-31"` | `pgslice> dump "users" 42 --truncate "orders:2024-01-01:2024-12-31"` |
-| **Wide mode** | `pgslice --dump users --pks 42 --wide` | `pgslice> dump "users" 42 --wide` |
-
-### When to Use Each Mode
-
-**Use CLI mode when:**
-- Piping output to other commands
-- Scripting and automation
-- Remote execution via SSH
-- One-off dumps
-
-**Use REPL mode when:**
-- Exploring database schema interactively
-- Running multiple dumps in a session
-- You prefer persistent file output
-- Testing different dump configurations
 
 ## Configuration
 

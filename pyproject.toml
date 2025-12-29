@@ -27,7 +27,7 @@ classifiers = [
 dependencies = [
     "psycopg[binary]>=3.2.2",
     "prompt-toolkit>=3.0.0",
-    "printy==3.0.0",
+    "printy==3.0.1",
     "tabulate>=0.9.0",
     "python-dotenv>=1.0.0",
     "tqdm>=4.66.0",
