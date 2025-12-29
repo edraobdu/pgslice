@@ -160,7 +160,7 @@ def run_cli_dump(
             return 1
 
         pk_values = fetch_pks_by_timeframe(
-            conn_manager, args.table, args.schema, timeframe
+            conn_manager, args.dump, args.schema, timeframe
         )
         if not pk_values:
             printy("[y]No records found matching the timeframe@")
@@ -170,8 +170,9 @@ def run_cli_dump(
         sys.stderr.write("Error: --pks or --timeframe is required\n")
         return 1
 
-    # Show progress only if stderr is a TTY (not piped)
-    show_progress = sys.stderr.isatty()
+    # Always show progress since we're writing to files (not stdout)
+    # Users want to see progress for large datasets
+    show_progress = True
 
     # Wide mode warning
     if args.wide and show_progress:
@@ -186,7 +187,7 @@ def run_cli_dump(
 
     # Execute dump
     result = service.dump(
-        table=args.table,
+        table=args.dump,
         pk_values=pk_values,
         schema=args.schema,
         wide_mode=args.wide,
@@ -196,12 +197,20 @@ def run_cli_dump(
         show_graph=args.graph,
     )
 
-    # Output SQL
+    # Always write to file (never stdout)
     if args.output:
-        SQLWriter.write_to_file(result.sql_content, args.output)
-        printy(f"[g]Wrote {result.record_count} records to {args.output}@")
+        output_path = args.output
     else:
-        SQLWriter.write_to_stdout(result.sql_content)
+        # Generate default filename like REPL mode does
+        output_path = SQLWriter.get_default_output_path(
+            config.output_dir,
+            args.dump,  # table name
+            pk_values[0] if pk_values else "multi",  # first PK for filename
+            args.schema,
+        )
+
+    SQLWriter.write_to_file(result.sql_content, str(output_path))
+    printy(f"[g]✓ Wrote {result.record_count} records to {output_path}@")
 
     return 0
 
@@ -260,14 +269,14 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Dump to stdout
-  PGPASSWORD=xxx %(prog)s --host localhost --database mydb --table users --pks 42
+  # Dump to auto-generated file (shows progress)
+  PGPASSWORD=xxx %(prog)s --host localhost --database mydb --dump users --pks 42
 
   # Dump by timeframe (instead of PKs)
-  %(prog)s --host localhost --database mydb --table orders --timeframe "created_at:2024-01-01:2024-12-31"
+  %(prog)s --host localhost --database mydb --dump orders --timeframe "created_at:2024-01-01:2024-12-31"
 
-  # Dump to file with truncate filter for related tables
-  %(prog)s --table users --pks 1 --truncate "orders:created_at:2024-01-01:2024-12-31" --output user.sql
+  # Dump to specific file with truncate filter for related tables
+  %(prog)s --dump users --pks 1 --truncate "orders:created_at:2024-01-01:2024-12-31" --output user.sql
 
   # List all tables
   %(prog)s --host localhost --database mydb --tables
@@ -340,8 +349,9 @@ Examples:
     # Dump operation arguments (non-interactive CLI mode)
     dump_group = parser.add_argument_group("Dump Operation (CLI mode)")
     dump_group.add_argument(
-        "--table",
-        help="Table name to dump (enables non-interactive CLI mode)",
+        "--dump",
+        "-d",
+        help="Table name to dump (same as 'dump' command in REPL mode)",
     )
 
     # --pks and --timeframe are mutually exclusive ways to select records
@@ -432,9 +442,9 @@ Examples:
             config.log_level = args.log_level
 
         # Validate CLI dump mode arguments
-        if args.table and not args.pks and not args.timeframe:
+        if args.dump and not args.pks and not args.timeframe:
             sys.stderr.write(
-                "Error: --pks or --timeframe is required when using --table\n"
+                "Error: --pks or --timeframe is required when using --dump\n"
             )
             return 1
 
@@ -485,7 +495,7 @@ Examples:
             if args.describe:
                 return run_describe_table(conn_manager, args.schema, args.describe)
 
-            if args.table:
+            if args.dump:
                 # Non-interactive CLI dump mode
                 return run_cli_dump(args, config, conn_manager)
             else:

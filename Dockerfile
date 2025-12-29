@@ -5,7 +5,7 @@ FROM python:3.13-alpine
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Install system dependencies
-RUN apk add --no-cache postgresql-client
+RUN apk add --no-cache postgresql-client su-exec
 
 # Install the project into `/app`
 WORKDIR /app
@@ -31,6 +31,9 @@ COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --no-deps -e .
 
+# Copy entrypoint script (must be done as root before USER directive)
+COPY --chmod=755 docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 
@@ -39,14 +42,13 @@ RUN adduser -D -u 1000 pgslice && \
     mkdir -p /home/pgslice/.cache/pgslice /home/pgslice/.pgslice/dumps && \
     chown -R pgslice:pgslice /app /home/pgslice
 
-# Switch to non-root user
-USER pgslice
-
 # Update cache directory to use pgslice's home
 ENV PGSLICE_CACHE_DIR=/home/pgslice/.cache/pgslice
 
-# Reset the entrypoint, don't invoke `uv`
-ENTRYPOINT []
+# Note: Container runs as root, entrypoint will drop to pgslice user after fixing permissions
 
-# Default command
+# Use custom entrypoint to fix permissions
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+
+# Default command (passed to entrypoint)
 CMD ["pgslice", "--help"]
