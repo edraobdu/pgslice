@@ -29,6 +29,20 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Get latest tag for version tagging
+        id: get_tag
+        run: |
+          # If triggered from a tag, use that tag
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            # Otherwise, fetch and use the latest tag
+            git fetch --tags
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          fi
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Using tag: $TAG"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -41,10 +55,8 @@ jobs:
         with:
           images: edraobdu/pgslice
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+            type=semver,pattern={{version}},value=${{ steps.get_tag.outputs.tag }}
+            type=raw,value=latest
 
       - name: Log in to DockerHub
         uses: docker/login-action@v3
