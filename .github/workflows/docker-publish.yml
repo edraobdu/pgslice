@@ -38,7 +38,7 @@ jobs:
           else
             # Otherwise, fetch and use the latest tag
             git fetch --tags
-            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+            TAG=$(git tag --sort=-version:refname | head -n 1 || echo "v0.0.0")
           fi
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "Using tag: $TAG"

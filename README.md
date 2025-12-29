@@ -19,7 +19,9 @@
 
 Python CLI tool for extracting PostgreSQL records with all related data via foreign key relationships.
 
-![PgSlice Example](.github/pgslie-example.gif)
+![PgSlice Example](.github/pgslice-example.gif)
+
+![PgSlice Example Wide](.github/pgslice-example-wide.gif)
 
 ## Overview
 
