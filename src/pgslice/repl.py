@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import shlex
+import time
 from pathlib import Path
 
-from printy import printy, raw_format
+from printy import printy, raw
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit.history import FileHistory
@@ -190,9 +191,9 @@ class REPL:
         # Wide mode warning
         if wide_mode:
             printy(
-                "  [y]⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.@"
+                "\n[gI]⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.@"
             )
-            printy("  [y]   This may take longer and fetch more data.@\n")
+            printy("[gI]This may take longer and fetch more data.@\n")
 
         if timeframe_filters:
             printy("  [y]Truncate filters:@")
@@ -201,6 +202,9 @@ class REPL:
             printy("")  # Empty line after filters
 
         try:
+            # Start timing
+            start_time = time.time()
+
             # Use DumpService for the actual dump
             # REPL always writes to files, so progress bar is safe to show
             service = DumpService(self.conn_manager, self.config, show_progress=True)
@@ -215,13 +219,22 @@ class REPL:
                 show_graph=show_graph,
             )
 
+            # Calculate and format elapsed time
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= 60:
+                time_str = f"{elapsed_time / 60:.1f}m"
+            elif elapsed_time >= 1:
+                time_str = f"{elapsed_time:.1f}s"
+            else:
+                time_str = f"{elapsed_time * 1000:.0f}ms"
+
             printy(f"\n  [g]✓ Found {result.record_count} related records@")
 
             # Output
             if output_file:
                 SQLWriter.write_to_file(result.sql_content, output_file)
                 printy(
-                    f"  [g]✓ Wrote {result.record_count} INSERT statements to {output_file}@\n"
+                    f"  [g]✓ Wrote {result.record_count} INSERT statements to {output_file} (took {time_str})@\n"
                 )
             else:
                 # Use default output path
@@ -233,7 +246,7 @@ class REPL:
                 )
                 SQLWriter.write_to_file(result.sql_content, str(default_path))
                 printy(
-                    f"  [g]✓ Wrote {result.record_count} INSERT statements to {default_path}@\n"
+                    f"  [g]✓ Wrote {result.record_count} INSERT statements to {default_path} (took {time_str})@\n"
                 )
 
         except DBReverseDumpError as e:
@@ -260,8 +273,8 @@ class REPL:
             tabulate(
                 help_data,
                 headers=[
-                    raw_format("Command", flags="B"),
-                    raw_format("Description", flags="B"),
+                    raw("Command", flags="B"),
+                    raw("Description", flags="B"),
                 ],
                 tablefmt="simple",
             )

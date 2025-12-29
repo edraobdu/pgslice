@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from importlib.metadata import version as get_version
@@ -174,13 +175,15 @@ def run_cli_dump(
     # Users want to see progress for large datasets
     show_progress = True
 
+    # Start timing
+    start_time = time.time()
+
     # Wide mode warning
     if args.wide and show_progress:
-        sys.stderr.write(
-            "\n⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.\n"
+        printy(
+            "\n[gI]⚠ Note: Wide mode follows ALL relationships including self-referencing FKs.@"
         )
-        sys.stderr.write("   This may take longer and fetch more data.\n\n")
-        sys.stderr.flush()
+        printy("[gI]This may take longer and fetch more data.@\n")
 
     # Create dump service
     service = DumpService(conn_manager, config, show_progress=show_progress)
@@ -210,7 +213,19 @@ def run_cli_dump(
         )
 
     SQLWriter.write_to_file(result.sql_content, str(output_path))
-    printy(f"[g]✓ Wrote {result.record_count} records to {output_path}@")
+
+    # Calculate and format elapsed time
+    elapsed_time = time.time() - start_time
+    if elapsed_time >= 60:
+        time_str = f"{elapsed_time / 60:.1f}m"
+    elif elapsed_time >= 1:
+        time_str = f"{elapsed_time:.1f}s"
+    else:
+        time_str = f"{elapsed_time * 1000:.0f}ms"
+
+    printy(
+        f"[g]✓ Wrote {result.record_count} records to {output_path} (took {time_str})@"
+    )
 
     return 0
 

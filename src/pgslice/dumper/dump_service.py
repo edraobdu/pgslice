@@ -14,7 +14,7 @@ from ..graph.models import TimeframeFilter
 from ..graph.traverser import RelationshipTraverser
 from ..graph.visited_tracker import VisitedTracker
 from ..utils.logging_config import get_logger
-from ..utils.spinner import SpinnerAnimator
+from ..utils.spinner import SpinnerAnimator, animated_spinner
 from .dependency_sorter import DependencySorter
 from .sql_generator import SQLGenerator
 
@@ -88,63 +88,55 @@ class DumpService:
             file=sys.stderr,
             bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt}",
         ) as pbar:
-            # Step 1: Setup and traverse relationships
             # Create spinner animator (updates every 100ms for smooth animation)
             spinner = SpinnerAnimator(update_interval=0.1)
 
-            pbar.set_description(f"Traversing relationships {spinner.get_frame()}")
-
-            # Define progress callback to update progress bar with animated spinner
-            def update_progress(count: int) -> None:
-                pbar.set_description(
-                    f"Traversing relationships {spinner.get_frame()} {count} records found"
+            # Step 1: Setup and traverse relationships (using animated spinner)
+            with animated_spinner(
+                spinner, pbar.set_description, "Traversing relationships"
+            ):
+                conn = self.conn_manager.get_connection()
+                introspector = SchemaIntrospector(conn)
+                visited = VisitedTracker()
+                traverser = RelationshipTraverser(
+                    conn,
+                    introspector,
+                    visited,
+                    timeframe_filters,
+                    wide_mode=wide_mode,
+                    fetch_batch_size=self.config.sql_batch_size,
                 )
 
-            conn = self.conn_manager.get_connection()
-            introspector = SchemaIntrospector(conn)
-            visited = VisitedTracker()
-            traverser = RelationshipTraverser(
-                conn,
-                introspector,
-                visited,
-                timeframe_filters,
-                wide_mode=wide_mode,
-                progress_callback=update_progress,
-            )
-
-            if len(pk_values) == 1:
-                records = traverser.traverse(
-                    table, pk_values[0], schema, self.config.max_depth
-                )
-            else:
-                records = traverser.traverse_multiple(
-                    table, pk_values, schema, self.config.max_depth
-                )
-            pbar.set_description(
-                f"Traversing relationships ✓ {len(records)} records found"
-            )
+                if len(pk_values) == 1:
+                    records = traverser.traverse(
+                        table, pk_values[0], schema, self.config.max_depth
+                    )
+                else:
+                    records = traverser.traverse_multiple(
+                        table, pk_values, schema, self.config.max_depth
+                    )
             pbar.update(1)
 
-            # Step 2: Sort by dependencies
-            pbar.set_description("Sorting dependencies ⠋")
-            sorter = DependencySorter()
-            sorted_records = sorter.sort(records)
-            pbar.set_description("Sorting dependencies ✓")
+            # Step 2: Sort by dependencies (using animated spinner)
+            with animated_spinner(
+                spinner, pbar.set_description, "Sorting dependencies"
+            ):
+                sorter = DependencySorter()
+                sorted_records = sorter.sort(records)
             pbar.update(1)
 
-            # Step 3: Generate SQL
-            pbar.set_description("Generating SQL ⠋")
-            generator = SQLGenerator(
-                introspector, batch_size=self.config.sql_batch_size
-            )
-            sql = generator.generate_batch(
-                sorted_records,
-                keep_pks=keep_pks,
-                create_schema=create_schema,
-                database_name=self.config.db.database,
-                schema_name=schema,
-            )
-            pbar.set_description("Generating SQL ✓")
+            # Step 3: Generate SQL (using animated spinner)
+            with animated_spinner(spinner, pbar.set_description, "Generating SQL"):
+                generator = SQLGenerator(
+                    introspector, batch_size=self.config.sql_batch_size
+                )
+                sql = generator.generate_batch(
+                    sorted_records,
+                    keep_pks=keep_pks,
+                    create_schema=create_schema,
+                    database_name=self.config.db.database,
+                    schema_name=schema,
+                )
             pbar.update(1)
 
             # Step 4: Complete

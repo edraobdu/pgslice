@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import date, datetime, time
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -411,6 +412,15 @@ class SQLGenerator:
             return "TRUE" if value else "FALSE"
 
         elif isinstance(value, int):
+            return str(value)
+
+        elif isinstance(value, Decimal):
+            # Handle Decimal (before float, since we want numeric output)
+            if value.is_nan():
+                return "'NaN'"
+            if value.is_infinite():
+                return "'Infinity'" if value > 0 else "'-Infinity'"
+            # Return as numeric literal (no quotes)
             return str(value)
 
         elif isinstance(value, float):
