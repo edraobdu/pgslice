@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2025-12-29
+
+### Fixed
+- Docker volume permission issues with dedicated entrypoint script
+
+### Changed
+- Optimized graph traversal performance using batch queries for relationship lookups
+
 ## [0.2.0] - 2025-12-28
 
 ### Added
