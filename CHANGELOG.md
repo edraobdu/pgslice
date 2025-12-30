@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2025-12-30
+
+### Changed
+- perf: optimize travsersal relationships with batching (#11)
+
 ## [0.2.1] - 2025-12-29
 
 ### Fixed
