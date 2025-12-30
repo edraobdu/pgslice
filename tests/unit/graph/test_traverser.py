@@ -269,14 +269,36 @@ class TestTraverse(TestRelationshipTraverser):
 class TestTraverseMultiple(TestRelationshipTraverser):
     """Tests for traverse_multiple method."""
 
+    def test_empty_pk_values_returns_empty_set(
+        self,
+        traverser: RelationshipTraverser,
+    ) -> None:
+        """Should return empty set for empty pk_values."""
+        results = traverser.traverse_multiple("users", [])
+        assert len(results) == 0
+
+    def test_single_pk_delegates_to_traverse(
+        self,
+        traverser: RelationshipTraverser,
+        mock_cursor: MagicMock,
+    ) -> None:
+        """Should delegate to traverse() for single PK."""
+        mock_cursor.fetchone.return_value = (1, "User 1")
+
+        results = traverser.traverse_multiple("users", [1])
+
+        assert len(results) == 1
+        record = list(results)[0]
+        assert record.identifier.table_name == "users"
+
     def test_traverses_all_starting_records(
         self,
         traverser: RelationshipTraverser,
         mock_cursor: MagicMock,
     ) -> None:
-        """Should traverse from all starting records."""
-        # Different return values for each call
-        mock_cursor.fetchone.side_effect = [
+        """Should traverse from all starting records using batch fetch."""
+        # Batch fetch returns all records at once
+        mock_cursor.fetchall.return_value = [
             (1, "User 1"),
             (2, "User 2"),
             (3, "User 3"),
@@ -292,7 +314,7 @@ class TestTraverseMultiple(TestRelationshipTraverser):
         mock_cursor: MagicMock,
     ) -> None:
         """Should combine results from all traversals."""
-        mock_cursor.fetchone.side_effect = [
+        mock_cursor.fetchall.return_value = [
             (1, "User 1"),
             (2, "User 2"),
         ]
@@ -302,6 +324,50 @@ class TestTraverseMultiple(TestRelationshipTraverser):
         identifiers = {r.identifier.pk_values for r in results}
         assert ("1",) in identifiers
         assert ("2",) in identifiers
+
+    def test_skips_already_visited_starting_records(
+        self,
+        traverser: RelationshipTraverser,
+        mock_cursor: MagicMock,
+        visited_tracker: VisitedTracker,
+    ) -> None:
+        """Should skip starting records that are already visited."""
+        # Pre-mark record 1 as visited
+        visited_tracker.mark_visited(
+            RecordIdentifier(
+                schema_name="public",
+                table_name="users",
+                pk_values=(1,),
+            )
+        )
+
+        # Only record 2 should be fetched
+        mock_cursor.fetchall.return_value = [
+            (2, "User 2"),
+        ]
+
+        results = traverser.traverse_multiple("users", [1, 2])
+
+        # Should only have record 2
+        assert len(results) == 1
+        record = list(results)[0]
+        assert record.identifier.pk_values == ("2",)
+
+    def test_respects_max_depth(
+        self,
+        traverser: RelationshipTraverser,
+        mock_cursor: MagicMock,
+    ) -> None:
+        """Should respect max_depth parameter."""
+        mock_cursor.fetchall.return_value = [
+            (1, "User 1"),
+            (2, "User 2"),
+        ]
+
+        results = traverser.traverse_multiple("users", [1, 2], max_depth=0)
+
+        # max_depth=0 means only the starting records
+        assert len(results) == 2
 
 
 class TestFetchRecord(TestRelationshipTraverser):
