@@ -58,12 +58,68 @@ jobs:
           NEW_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Commit version bump
+      - name: Get commits since last tag
+        id: get_commits
+        run: |
+          # Get the last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -z "$LAST_TAG" ]; then
+            # No tags exist, get all commits
+            COMMITS=$(git log --pretty=format:"%s" --no-merges)
+          else
+            # Get commits since last tag
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s" --no-merges)
+          fi
+
+          # Filter out chore/ci/build commits and format as list
+          echo "$COMMITS" | grep -vE '^(chore|ci|build):' | sed 's/^/- /' > /tmp/commits.txt
+
+          # If no commits remain after filtering, add a placeholder
+          if [ ! -s /tmp/commits.txt ]; then
+            echo "- No notable changes" > /tmp/commits.txt
+          fi
+
+          # Also save for PR body (escaped for GitHub Actions)
+          {
+            echo 'changelog<<EOF'
+            cat /tmp/commits.txt
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Update CHANGELOG.md
+        run: |
+          VERSION="${{ steps.bump_version.outputs.new_version }}"
+          DATE=$(date +%Y-%m-%d)
+          COMMITS=$(cat /tmp/commits.txt)
+
+          # Create new changelog section
+          NEW_SECTION="## [$VERSION] - $DATE
+
+          ### Changed
+          $COMMITS
+          "
+
+          # Insert after [Unreleased] section using awk
+          awk -v section="$NEW_SECTION" '
+            /^## \[Unreleased\]/ {
+              print
+              getline
+              print
+              print section
+              next
+            }
+            {print}
+          ' CHANGELOG.md > CHANGELOG.tmp && mv CHANGELOG.tmp CHANGELOG.md
+
+      - name: Commit version bump and changelog
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml
-          git commit -m "Bump version to ${{ steps.bump_version.outputs.new_version }}"
+          git add pyproject.toml CHANGELOG.md
+          git commit -m "Bump version to ${{ steps.bump_version.outputs.new_version }}
+
+          Update CHANGELOG.md with commits since last release"
 
       - name: Create release branch
         id: create_branch
@@ -88,10 +144,14 @@ jobs:
 
           This PR bumps the version from ${{ steps.current_version.outputs.version }} to ${{ steps.bump_version.outputs.new_version }}.
 
+          ### Changes in this release
+          ${{ steps.get_commits.outputs.changelog }}
+
           ### Pre-merge Checklist
           - [ ] All tests pass
           - [ ] All lint checks pass
           - [ ] Version bump is correct
+          - [ ] CHANGELOG.md looks correct
 
           ### Post-merge Actions
           Once merged, the following will happen automatically:
