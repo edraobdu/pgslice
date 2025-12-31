@@ -1906,3 +1906,226 @@ class TestCreateSchemaIntegration(TestSQLGenerator):
         assert "CREATE DATABASE" not in sql
         assert "CREATE SCHEMA" not in sql
         assert "CREATE TABLE" not in sql
+
+
+class TestReservedKeywordColumns(TestSQLGenerator):
+    """Test that PostgreSQL reserved keywords are properly quoted in generated SQL."""
+
+    @pytest.fixture
+    def table_with_references_column(self) -> Table:
+        """Create a table with 'references' column (reserved keyword)."""
+        return Table(
+            schema_name="public",
+            table_name="shipments_shipment",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                ),
+                Column(
+                    name="reference_id",
+                    data_type="character varying",
+                    udt_name="varchar",
+                    nullable=True,
+                ),
+                Column(
+                    name="references",  # Reserved keyword!
+                    data_type="jsonb",
+                    udt_name="jsonb",
+                    nullable=True,
+                ),
+                Column(
+                    name="state_id",
+                    data_type="character varying",
+                    udt_name="varchar",
+                    nullable=True,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+    def test_quote_identifier_simple(self, generator: SQLGenerator) -> None:
+        """_quote_identifier should properly quote identifiers."""
+        assert generator._quote_identifier("column_name") == '"column_name"'
+        assert generator._quote_identifier("references") == '"references"'
+        assert generator._quote_identifier("user") == '"user"'
+        assert generator._quote_identifier("group") == '"group"'
+
+    def test_quote_identifier_with_embedded_quotes(
+        self, generator: SQLGenerator
+    ) -> None:
+        """_quote_identifier should escape embedded double quotes."""
+        assert generator._quote_identifier('col"name') == '"col""name"'
+        assert generator._quote_identifier('my"table"name') == '"my""table""name"'
+
+    def test_insert_with_references_column(
+        self, mock_introspector: MagicMock, table_with_references_column: Table
+    ) -> None:
+        """Should properly quote 'references' column in INSERT statement."""
+        mock_introspector.get_table_metadata.return_value = table_with_references_column
+        generator = SQLGenerator(mock_introspector)
+
+        record = RecordData(
+            identifier=RecordIdentifier(
+                table_name="shipments_shipment", schema_name="public", pk_values=("1",)
+            ),
+            data={
+                "id": 1,
+                "reference_id": "WNZK22",
+                "references": "[]",
+                "state_id": "quoting",
+            },
+            dependencies=[],
+        )
+
+        sql = generator.generate_batch([record], keep_pks=True)
+
+        # Verify the column is quoted in the INSERT statement
+        assert '"references"' in sql
+        # Verify it's in the column list
+        assert '("id", "reference_id", "references", "state_id")' in sql
+
+    def test_fk_remapping_with_reserved_keyword_column(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should properly quote reserved keywords in FK remapping INSERT-SELECT."""
+        # Create a table with 'user' as a FK column (reserved keyword)
+        table_with_user_fk = Table(
+            schema_name="public",
+            table_name="posts",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="user",  # Reserved keyword as FK!
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                ),
+                Column(
+                    name="content",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[
+                ForeignKey(
+                    constraint_name="fk_posts_user",
+                    source_table="public.posts",
+                    source_column="user",
+                    target_table="public.users",
+                    target_column="id",
+                    on_delete="CASCADE",
+                )
+            ],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table_with_user_fk
+        generator = SQLGenerator(mock_introspector)
+
+        record = RecordData(
+            identifier=RecordIdentifier(
+                table_name="posts", schema_name="public", pk_values=("1",)
+            ),
+            data={"id": 1, "user": 42, "content": "Hello World"},
+            dependencies=[
+                RecordIdentifier(
+                    table_name="users", schema_name="public", pk_values=("42",)
+                )
+            ],
+        )
+
+        # Call the private method directly with correct parameters
+        tables_with_remapped_ids = {("public", "users")}
+        sql = generator._generate_insert_with_fk_remapping(
+            "public", "posts", [record], tables_with_remapped_ids
+        )
+
+        # Verify reserved keyword is quoted in the AS data(...) clause
+        assert '"old_user"' in sql
+        # Verify it's quoted in JOIN condition
+        assert 'data."old_user"' in sql
+
+    def test_multiple_reserved_keywords(self, mock_introspector: MagicMock) -> None:
+        """Should properly quote multiple reserved keyword columns."""
+        table_with_multiple_keywords = Table(
+            schema_name="public",
+            table_name="test_reserved",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                ),
+                Column(
+                    name="user",  # Reserved
+                    data_type="character varying",
+                    udt_name="varchar",
+                    nullable=True,
+                ),
+                Column(
+                    name="group",  # Reserved
+                    data_type="character varying",
+                    udt_name="varchar",
+                    nullable=True,
+                ),
+                Column(
+                    name="references",  # Reserved
+                    data_type="jsonb",
+                    udt_name="jsonb",
+                    nullable=True,
+                ),
+                Column(
+                    name="order",  # Reserved
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=True,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table_with_multiple_keywords
+        generator = SQLGenerator(mock_introspector)
+
+        record = RecordData(
+            identifier=RecordIdentifier(
+                table_name="test_reserved", schema_name="public", pk_values=("1",)
+            ),
+            data={
+                "id": 1,
+                "user": "john",
+                "group": "admin",
+                "references": "{}",
+                "order": 5,
+            },
+            dependencies=[],
+        )
+
+        sql = generator.generate_batch([record], keep_pks=True)
+
+        # Verify all reserved keywords are quoted
+        assert '"user"' in sql
+        assert '"group"' in sql
+        assert '"references"' in sql
+        assert '"order"' in sql
+        # Verify they're in the column list
+        assert '("group", "id", "order", "references", "user")' in sql

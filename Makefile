@@ -54,6 +54,27 @@ clean:  ## Remove build artifacts and cache
 show-version:  ## Show current version from pyproject.toml
 	@uv version
 
+bump-patch:  ## Bump patch version (0.1.0 -> 0.1.1)
+	uv version --bump patch
+	uv lock
+	@echo "✓ Version bumped to $$(uv version)"
+	@echo "Remember to commit: git add pyproject.toml uv.lock && git commit -m 'Bump version'"
+
+bump-minor:  ## Bump minor version (0.1.0 -> 0.2.0)
+	uv version --bump minor
+	uv lock
+	@echo "✓ Version bumped to $$(uv version)"
+	@echo "Remember to commit: git add pyproject.toml uv.lock && git commit -m 'Bump version'"
+
+bump-major:  ## Bump major version (0.1.0 -> 1.0.0)
+	uv version --bump major
+	uv lock
+	@echo "✓ Version bumped to $$(uv version)"
+	@echo "Remember to commit: git add pyproject.toml uv.lock && git commit -m 'Bump version'"
+
+lock:  ## Update uv.lock file
+	uv lock
+
 # Docker commands
 docker-build:  ## Build Docker image
 	docker build -t $(DOCKER_IMAGE) .
