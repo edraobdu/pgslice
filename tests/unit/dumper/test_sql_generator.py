@@ -984,7 +984,7 @@ class TestOnConflictHandling(TestSQLGenerator):
     def test_build_on_conflict_without_constraints(
         self, mock_introspector: MagicMock
     ) -> None:
-        """Should return empty string when no unique constraints."""
+        """Should build ON CONFLICT for non-auto-generated PK even without unique constraints."""
         table = Table(
             schema_name="public",
             table_name="logs",
@@ -995,6 +995,7 @@ class TestOnConflictHandling(TestSQLGenerator):
                     udt_name="int4",
                     nullable=False,
                     is_primary_key=True,
+                    is_auto_generated=False,  # Explicitly not auto-generated
                 ),
             ],
             primary_keys=["id"],
@@ -1008,8 +1009,313 @@ class TestOnConflictHandling(TestSQLGenerator):
 
         result = generator._build_on_conflict_clause(table, ["id"], [])
 
-        # Should return empty string or None
-        assert result == "" or result is None
+        # Should build ON CONFLICT for non-auto-generated PK
+        assert "ON CONFLICT" in result
+        assert '("id")' in result
+        assert "DO UPDATE SET" in result
+        assert '"id" = EXCLUDED."id"' in result
+
+    def test_build_on_conflict_with_string_pk(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should build ON CONFLICT clause for non-auto-generated string PK."""
+        table = Table(
+            schema_name="public",
+            table_name="shipments_shipmentstate",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="character varying",
+                    udt_name="varchar",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=False,  # NOT auto-generated
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},  # No unique constraints
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        # Test the helper method directly
+        result = generator._build_on_conflict_clause(
+            table,
+            ["id", "name"],
+            [],  # No auto-gen PKs
+        )
+
+        # Should generate ON CONFLICT for the string PK
+        assert "ON CONFLICT" in result
+        assert '("id")' in result
+        assert "DO UPDATE SET" in result
+        assert '"id" = EXCLUDED."id"' in result
+
+    def test_build_on_conflict_with_composite_string_pks(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should build ON CONFLICT clause for composite non-auto-generated PKs."""
+        table = Table(
+            schema_name="public",
+            table_name="junction_table",
+            columns=[
+                Column(
+                    name="entity_a_id",
+                    data_type="uuid",
+                    udt_name="uuid",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=False,
+                ),
+                Column(
+                    name="entity_b_id",
+                    data_type="uuid",
+                    udt_name="uuid",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=False,
+                ),
+                Column(
+                    name="created_at",
+                    data_type="timestamp",
+                    udt_name="timestamp",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["entity_a_id", "entity_b_id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        result = generator._build_on_conflict_clause(
+            table, ["entity_a_id", "entity_b_id", "created_at"], []
+        )
+
+        # Should generate ON CONFLICT with both PKs
+        assert "ON CONFLICT" in result
+        assert '("entity_a_id", "entity_b_id")' in result
+        assert "DO UPDATE SET" in result
+        # Should use first PK for no-op update
+        assert '"entity_a_id" = EXCLUDED."entity_a_id"' in result
+
+    def test_build_on_conflict_with_mixed_pks(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should build ON CONFLICT for non-auto-generated PKs in composite key."""
+        table = Table(
+            schema_name="public",
+            table_name="versioned_data",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,  # Auto-generated
+                ),
+                Column(
+                    name="version",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=False,  # Manually set
+                ),
+                Column(
+                    name="data",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id", "version"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        # Only "version" is being inserted (id is excluded as auto-gen)
+        result = generator._build_on_conflict_clause(
+            table,
+            ["version", "data"],
+            ["id"],  # id is auto-gen
+        )
+
+        # Should generate ON CONFLICT for non-auto-gen PK only
+        assert "ON CONFLICT" in result
+        assert '("version")' in result
+        assert "DO UPDATE SET" in result
+        assert '"version" = EXCLUDED."version"' in result
+
+    def test_build_on_conflict_all_auto_gen_pks_no_unique(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should return empty string when all PKs are auto-generated and no unique constraints."""
+        table = Table(
+            schema_name="public",
+            table_name="products",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        result = generator._build_on_conflict_clause(
+            table,
+            ["name"],
+            ["id"],  # id is auto-gen and excluded
+        )
+
+        # Should return empty string (no ON CONFLICT needed)
+        assert result == ""
+
+    def test_build_on_conflict_string_pk_takes_priority_over_unique(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should use string PK for ON CONFLICT even when unique constraint exists."""
+        table = Table(
+            schema_name="public",
+            table_name="users",
+            columns=[
+                Column(
+                    name="username",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=False,
+                ),
+                Column(
+                    name="email",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["username"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={"uq_email": ["email"]},  # Has unique constraint
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        result = generator._build_on_conflict_clause(table, ["username", "email"], [])
+
+        # Should use PK, not unique constraint
+        assert "ON CONFLICT" in result
+        assert '("username")' in result  # PK, not email
+        assert "DO UPDATE SET" in result
+        assert '"username" = EXCLUDED."username"' in result
+
+    def test_generate_batch_plpgsql_string_pk_idempotent(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should generate idempotent PL/pgSQL for string PK tables."""
+        table = Table(
+            schema_name="public",
+            table_name="shipments_shipmentstate",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="character varying",
+                    udt_name="varchar",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=False,
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+
+        # Mock column types
+        mock_introspector.get_column_types.return_value = {
+            "id": "character varying",
+            "name": "text",
+        }
+
+        generator = SQLGenerator(mock_introspector)
+
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="shipments_shipmentstate",
+                    schema_name="public",
+                    pk_values=("barge_departed",),
+                ),
+                data={"id": "barge_departed", "name": "Barge Departed"},
+                dependencies=[],
+            ),
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="shipments_shipmentstate",
+                    schema_name="public",
+                    pk_values=("empty_outgated",),
+                ),
+                data={"id": "empty_outgated", "name": "Empty Outgated"},
+                dependencies=[],
+            ),
+        ]
+
+        # Generate with keep_pks=False (PL/pgSQL mode)
+        sql = generator.generate_batch(records, keep_pks=False)
+
+        # Should have ON CONFLICT clause for idempotency
+        assert "ON CONFLICT" in sql
+        assert '("id")' in sql
+        assert "DO UPDATE SET" in sql
+
+        # Verify PL/pgSQL structure is intact
+        assert "DO $$" in sql
+        assert "CREATE TEMP TABLE IF NOT EXISTS _pgslice_id_map" in sql
 
 
 class TestHelperMethods(TestSQLGenerator):
