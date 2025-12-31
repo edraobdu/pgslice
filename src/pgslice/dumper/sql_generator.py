@@ -845,19 +845,46 @@ class SQLGenerator:
         auto_gen_pks: list[str],
     ) -> str:
         """
-        Build ON CONFLICT clause for unique constraints.
+        Build ON CONFLICT clause for primary keys or unique constraints.
 
         Uses DO UPDATE with a no-op update to always get RETURNING values.
         This makes the SQL idempotent - reusing existing records instead of failing.
 
+        Priority order:
+        1. Non-auto-generated primary keys (string PKs, UUIDs, manual IDs)
+        2. Unique constraints (existing behavior)
+        3. Empty string if all PKs are auto-generated and no unique constraints
+
         Args:
-            table_meta: Table metadata with unique constraints
+            table_meta: Table metadata with primary keys and unique constraints
             insert_columns: Columns being inserted
             auto_gen_pks: Auto-generated PK columns (excluded from ON CONFLICT)
 
         Returns:
-            ON CONFLICT clause string, or empty string if no unique constraints
+            ON CONFLICT clause string, or empty string if no conflict target available
         """
+        # PRIORITY 1: Check for non-auto-generated primary keys
+        # These are string PKs, UUIDs, or manually-set integer PKs
+        if table_meta.primary_keys:
+            # Get PKs that are NOT auto-generated
+            non_auto_gen_pks = [
+                pk for pk in table_meta.primary_keys if pk not in auto_gen_pks
+            ]
+
+            # Verify all PK columns are being inserted
+            if non_auto_gen_pks and all(
+                pk in insert_columns for pk in non_auto_gen_pks
+            ):
+                conflict_cols = ", ".join(f'"{pk}"' for pk in non_auto_gen_pks)
+                # Use first PK for no-op update
+                update_col = non_auto_gen_pks[0]
+                on_conflict = (
+                    f"ON CONFLICT ({conflict_cols}) "
+                    f'DO UPDATE SET "{update_col}" = EXCLUDED."{update_col}"'
+                )
+                return on_conflict
+
+        # PRIORITY 2: Check for unique constraints (existing logic)
         unique_constraints = table_meta.unique_constraints
 
         # Filter out unique constraints that only contain auto-generated PKs
@@ -1041,13 +1068,23 @@ class SQLGenerator:
                 values_sql = ", ".join(values)
                 values_rows.append(f"        ({values_sql})")
             values_clause = ",\n".join(values_rows)
-            return "\n".join(
-                [
-                    f"    INSERT INTO {full_table_name} ({columns_sql})",
-                    "    VALUES",
-                    f"{values_clause};",
-                ]
+
+            # Build ON CONFLICT clause for idempotency
+            table_meta = self.introspector.get_table_metadata(schema, table)
+            on_conflict = self._build_on_conflict_clause(
+                table_meta, columns, auto_gen_pks
             )
+
+            sql_parts = [
+                f"    INSERT INTO {full_table_name} ({columns_sql})",
+                "    VALUES",
+                f"{values_clause}",
+            ]
+            if on_conflict:
+                sql_parts.append(f"    {on_conflict}")
+            sql_parts.append(";")
+
+            return "\n".join(sql_parts)
 
         # Build VALUES clause with old FK values as strings
         values_rows = []
@@ -1215,8 +1252,19 @@ class SQLGenerator:
                 )
                 return "\n".join(sql_lines)
         else:
-            # No auto-gen PKs: return simple INSERT-SELECT
+            # No auto-gen PKs: return simple INSERT-SELECT with ON CONFLICT
+            table_meta = self.introspector.get_table_metadata(schema, table)
+
+            # Build ON CONFLICT clause for idempotency
+            on_conflict = self._build_on_conflict_clause(
+                table_meta, columns, auto_gen_pks
+            )
+
             sql_lines = base_sql_lines.copy()
-            # Add semicolon to the last line
-            sql_lines[-1] = sql_lines[-1] + ";"
+            # Remove trailing semicolon if present
+            sql_lines[-1] = sql_lines[-1].rstrip(";")
+            if on_conflict:
+                sql_lines.append(f"    {on_conflict}")
+            # Add semicolon at the end
+            sql_lines.append(";")
             return "\n".join(sql_lines)
