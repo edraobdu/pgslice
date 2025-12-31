@@ -955,6 +955,10 @@ class TestFindReferencingRecords:
             wide_mode=True,
         )
 
+        # Set starting_table to "orders" so that timeframe filter applies
+        # (timeframe filters only apply to the starting table)
+        traverser.starting_table = "orders"
+
         mock_cursor = MagicMock()
         mock_cursor.fetchall.return_value = [(100,)]
         mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
@@ -966,7 +970,7 @@ class TestFindReferencingRecords:
 
         traverser._find_referencing_records(target_id, fk)
 
-        # Should include timeframe filter in query
+        # Should include timeframe filter in query since orders is the starting table
         query_args = mock_cursor.execute.call_args[0]
         assert "BETWEEN %s AND %s" in query_args[0]
         # Should pass timeframe parameters
@@ -1204,3 +1208,185 @@ class TestDependencyTracking:
         fk = orders_table.foreign_keys_outgoing[0]
         assert fk.source_column == "user_id"
         assert fk.target_table == "public.users"
+
+
+class TestTimeframeFilterOnlyAppliedToStartingTable:
+    """Test that timeframe filters are only applied to the starting table, not FK-related tables."""
+
+    @pytest.fixture
+    def mock_cursor(self) -> MagicMock:
+        """Create a mock cursor."""
+        cursor = MagicMock()
+        cursor.execute = MagicMock()
+        cursor.description = [("id",), ("name",)]
+        return cursor
+
+    @pytest.fixture
+    def mock_connection(self, mock_cursor: MagicMock) -> MagicMock:
+        """Create a mock connection."""
+        conn = MagicMock()
+        cursor_cm = MagicMock()
+        cursor_cm.__enter__ = MagicMock(return_value=mock_cursor)
+        cursor_cm.__exit__ = MagicMock(return_value=False)
+        conn.cursor.return_value = cursor_cm
+        return conn
+
+    @pytest.fixture
+    def mock_introspector(self) -> MagicMock:
+        """Create a mock SchemaIntrospector."""
+        introspector = MagicMock()
+        return introspector
+
+    @pytest.fixture
+    def visited_tracker(self) -> VisitedTracker:
+        """Create a VisitedTracker."""
+        return VisitedTracker()
+
+    def test_timeframe_filter_only_applies_to_starting_table(
+        self,
+        mock_connection: MagicMock,
+        mock_introspector: MagicMock,
+        mock_cursor: MagicMock,
+        visited_tracker: VisitedTracker,
+    ) -> None:
+        """Timeframe filters should ONLY apply to starting table, not FK-related tables."""
+        # Setup film table (starting table)
+        film_table = Table(
+            schema_name="public",
+            table_name="film",
+            columns=[
+                Column(
+                    name="film_id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                ),
+                Column(
+                    name="last_update",
+                    data_type="timestamp",
+                    udt_name="timestamp",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["film_id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[
+                ForeignKey(
+                    constraint_name="fk_film_actor_film",
+                    source_table="public.film_actor",
+                    source_column="film_id",
+                    target_table="public.film",
+                    target_column="film_id",
+                    on_delete="CASCADE",
+                )
+            ],
+        )
+
+        # Setup film_actor table (related via incoming FK)
+        film_actor_table = Table(
+            schema_name="public",
+            table_name="film_actor",
+            columns=[
+                Column(
+                    name="film_id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                ),
+                Column(
+                    name="actor_id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                ),
+                Column(
+                    name="last_update",
+                    data_type="timestamp",
+                    udt_name="timestamp",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["film_id", "actor_id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        # Mock introspector to return our tables
+        def get_table_metadata(schema: str, table: str) -> Table:
+            if table == "film":
+                return film_table
+            elif table == "film_actor":
+                return film_actor_table
+            raise ValueError(f"Unknown table: {table}")
+
+        mock_introspector.get_table_metadata = MagicMock(side_effect=get_table_metadata)
+
+        # Setup cursor mock responses
+        # First call: fetch film record
+        # Second call: fetch film_actor records (should NOT have timeframe filter)
+        mock_cursor.fetchone.return_value = (1, datetime(2024, 6, 1))
+        mock_cursor.fetchall.side_effect = [
+            [(1, datetime(2024, 6, 1))],  # film fetch
+            [(1, 1), (1, 2), (1, 3)],  # film_actor fetch (3 records)
+        ]
+
+        # Create traverser with timeframe filter on film_actor
+        # This filter should be IGNORED because film_actor is not the starting table
+        timeframe_filters = [
+            TimeframeFilter(
+                table_name="film_actor",
+                column_name="last_update",
+                start_date=datetime(
+                    2099, 1, 1
+                ),  # Future date - would exclude all records
+                end_date=datetime(2099, 12, 31),
+            )
+        ]
+
+        traverser = RelationshipTraverser(
+            connection=mock_connection,
+            schema_introspector=mock_introspector,
+            visited_tracker=visited_tracker,
+            timeframe_filters=timeframe_filters,
+            wide_mode=False,  # Strict mode
+        )
+
+        # Traverse from film (starting table = "film")
+        results = traverser.traverse("film", 1, "public")
+
+        # Verify results
+        record_tables = {r.identifier.table_name for r in results}
+
+        # Film should be included
+        assert "film" in record_tables, "Film should be included"
+
+        # film_actor should be included even though it has a timeframe filter
+        # because the timeframe should ONLY apply to the starting table ("film")
+        assert "film_actor" in record_tables, (
+            "film_actor should be included (timeframe ignored for non-starting tables)"
+        )
+
+        # Verify the SQL query for film_actor did NOT include the timeframe filter
+        executed_queries = [call[0][0] for call in mock_cursor.execute.call_args_list]
+
+        # Find the film_actor query
+        film_actor_query = next(
+            (q for q in executed_queries if "film_actor" in q.lower()), None
+        )
+
+        assert film_actor_query is not None, (
+            "film_actor query should have been executed"
+        )
+
+        # Verify the query does NOT contain the timeframe filter
+        # (The timeframe filter would add: AND "last_update" BETWEEN %s AND %s)
+        assert "2099" not in film_actor_query, (
+            "film_actor query should not contain future timeframe dates"
+        )
+        assert (
+            "last_update" not in film_actor_query.lower()
+            or "between" not in film_actor_query.lower()
+        ), "film_actor query should not have timeframe filter"

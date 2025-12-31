@@ -248,6 +248,28 @@ class SQLGenerator:
             }
         return self._column_type_cache[key]
 
+    def _quote_identifier(self, identifier: str) -> str:
+        """
+        Quote a SQL identifier safely.
+
+        Always uses double quotes to handle reserved words and special characters.
+        Escapes embedded double quotes.
+
+        Args:
+            identifier: SQL identifier (table, column, schema name)
+
+        Returns:
+            Quoted identifier
+
+        Example:
+            "users" -> '"users"'
+            "references" -> '"references"'
+            'col"name' -> '"col""name"'  (escaped quote)
+        """
+        # Escape embedded double quotes by doubling them
+        escaped = identifier.replace('"', '""')
+        return f'"{escaped}"'
+
     def _is_array_type(self, data_type: str) -> bool:
         """
         Check if a PostgreSQL data type is an array type.
@@ -972,11 +994,11 @@ class SQLGenerator:
             SELECT
                 map0.new_id::integer,
                 map1.new_id::integer,
-                data.last_update
+                data."last_update"
             FROM (VALUES
                 ('20', '1', '2006-02-15T10:05:03'),
                 ...
-            ) AS data(old_actor_id, old_film_id, last_update)
+            ) AS data("old_actor_id", "old_film_id", "last_update")
             JOIN _pgslice_id_map map0 ...
             JOIN _pgslice_id_map map1 ...
         """
@@ -1057,13 +1079,15 @@ class SQLGenerator:
         values_clause = ",\n".join(values_rows)
 
         # Create column aliases for the VALUES clause
-        # Example: data(old_actor_id, old_film_id, description, last_update)
+        # Example: data("old_actor_id", "old_film_id", "description", "last_update")
         data_column_aliases = []
         for col in columns:
             if col in fk_to_remap:
-                data_column_aliases.append(f"old_{col}")
+                # Quote the prefixed alias for remapped FK columns
+                data_column_aliases.append(self._quote_identifier(f"old_{col}"))
             else:
-                data_column_aliases.append(col)
+                # Quote regular column names to handle reserved keywords
+                data_column_aliases.append(self._quote_identifier(col))
 
         # Get table metadata for column types
         table_meta = self.introspector.get_table_metadata(schema, table)
@@ -1096,7 +1120,7 @@ class SQLGenerator:
                 join_clauses.append(
                     f"    JOIN _pgslice_id_map {alias}\n"
                     f"        ON {alias}.table_name = '{target_full}'\n"
-                    f"        AND {alias}.old_id = data.old_{col}"
+                    f"        AND {alias}.old_id = data.{self._quote_identifier(f'old_{col}')}"
                 )
                 join_index += 1
             else:
@@ -1116,10 +1140,12 @@ class SQLGenerator:
                         element_type = self._get_array_element_type(col_meta.udt_name)
                         pg_type = f"{element_type}[]"
 
-                    select_parts.append(f"data.{col}::{pg_type}")
+                    select_parts.append(
+                        f"data.{self._quote_identifier(col)}::{pg_type}"
+                    )
                 else:
                     # Fallback if column metadata not found
-                    select_parts.append(f"data.{col}")
+                    select_parts.append(f"data.{self._quote_identifier(col)}")
 
         select_clause = ",\n        ".join(select_parts)
         join_clause = "\n".join(join_clauses)

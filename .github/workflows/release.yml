@@ -58,6 +58,10 @@ jobs:
           NEW_VERSION=$(grep '^version = ' pyproject.toml | cut -d'"' -f2)
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Update lock file
+        run: |
+          uv lock
+
       - name: Get commits since last tag
         id: get_commits
         run: |
@@ -116,10 +120,10 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml CHANGELOG.md
+          git add pyproject.toml uv.lock CHANGELOG.md
           git commit -m "Bump version to ${{ steps.bump_version.outputs.new_version }}
 
-          Update CHANGELOG.md with commits since last release"
+          Update CHANGELOG.md with commits since last release and sync lock file"
 
       - name: Create release branch
         id: create_branch

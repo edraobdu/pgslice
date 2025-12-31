@@ -54,6 +54,9 @@ class RelationshipTraverser:
         self.timeframe_filters = {f.table_name: f for f in (timeframe_filters or [])}
         self.wide_mode = wide_mode
         self.fetch_batch_size = fetch_batch_size
+        self.starting_table: str | None = (
+            None  # Track starting table for timeframe filtering
+        )
 
     def traverse(
         self,
@@ -87,6 +90,9 @@ class RelationshipTraverser:
         Raises:
             RecordNotFoundError: If starting record doesn't exist
         """
+        # Track starting table for timeframe filtering (only apply to starting table)
+        self.starting_table = table_name
+
         start_id = self._create_record_identifier(schema, table_name, (pk_value,))
         queue: deque[tuple[RecordIdentifier, int, bool]] = deque([(start_id, 0, True)])
         results: set[RecordData] = set()
@@ -257,6 +263,9 @@ class RelationshipTraverser:
         Returns:
             Set of all discovered RecordData objects
         """
+        # Track starting table for timeframe filtering (only apply to starting table)
+        self.starting_table = table_name
+
         # Edge case: empty pk_values
         if not pk_values:
             logger.info("No primary keys provided for traversal")
@@ -511,9 +520,12 @@ class RelationshipTraverser:
             where_parts.append(f'"{pk_col}" = %s')
             params.append(pk_val)
 
-        # Apply timeframe filter if applicable
+        # Apply timeframe filter only to starting table
         timeframe_clause = ""
-        if record_id.table_name in self.timeframe_filters:
+        if (
+            record_id.table_name in self.timeframe_filters
+            and record_id.table_name == self.starting_table
+        ):
             filter_config = self.timeframe_filters[record_id.table_name]
             timeframe_clause = f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
             params.extend([filter_config.start_date, filter_config.end_date])
@@ -568,16 +580,33 @@ class RelationshipTraverser:
                 logger.warning(f"Table {schema}.{table} has no primary key, skipping")
                 continue
 
-            # Build WHERE clause: WHERE id IN (1, 2, 3)
-            pk_col = table_metadata.primary_keys[0]
-            pk_values = [rid.pk_values[0] for rid in table_record_ids]
-            placeholders = ", ".join(["%s"] * len(pk_values))
+            pk_cols = table_metadata.primary_keys
 
-            # Apply timeframe filter if applicable
+            # Apply timeframe filter only to starting table
             timeframe_clause = ""
-            params: list[Any] = pk_values.copy()
+            params: list[Any] = []
 
-            if table in self.timeframe_filters:
+            # Build WHERE clause for composite or single PK
+            if len(pk_cols) == 1:
+                # Single column PK: WHERE id IN (1, 2, 3)
+                pk_col = pk_cols[0]
+                pk_values = [rid.pk_values[0] for rid in table_record_ids]
+                placeholders = ", ".join(["%s"] * len(pk_values))
+                where_clause = f'"{pk_col}" IN ({placeholders})'
+                params.extend(pk_values)
+            else:
+                # Composite PK: WHERE (col1, col2) IN ((1, 2), (3, 4))
+                pk_columns = ", ".join([f'"{col}"' for col in pk_cols])
+                pk_tuples = [rid.pk_values for rid in table_record_ids]
+                tuple_placeholders = ", ".join(
+                    ["(" + ", ".join(["%s"] * len(pk_cols)) + ")"] * len(pk_tuples)
+                )
+                where_clause = f"({pk_columns}) IN ({tuple_placeholders})"
+                # Flatten the tuples into a single list of params
+                for pk_tuple in pk_tuples:
+                    params.extend(pk_tuple)
+
+            if table in self.timeframe_filters and table == self.starting_table:
                 filter_config = self.timeframe_filters[table]
                 timeframe_clause = (
                     f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
@@ -586,7 +615,7 @@ class RelationshipTraverser:
 
             query = f"""
                 SELECT * FROM "{schema}"."{table}"
-                WHERE "{pk_col}" IN ({placeholders}){timeframe_clause}
+                WHERE {where_clause}{timeframe_clause}
             """
 
             with self.conn.cursor() as cur:
@@ -596,9 +625,10 @@ class RelationshipTraverser:
 
                 for row in rows:
                     data = dict(zip(columns, row, strict=False))
-                    pk_value = data[pk_col]
+                    # Extract all PK values for composite keys
+                    record_pk_values = tuple(data[col] for col in pk_cols)
                     record_id = self._create_record_identifier(
-                        schema, table, (pk_value,)
+                        schema, table, record_pk_values
                     )
                     results[record_id] = RecordData(identifier=record_id, data=data)
 
@@ -664,11 +694,11 @@ class RelationshipTraverser:
         # Build query
         pk_columns = ", ".join(f'"{pk}"' for pk in source_table.primary_keys)
 
-        # Apply timeframe filter if applicable
+        # Apply timeframe filter only to starting table
         timeframe_clause = ""
         params: list[Any] = [target_pk_value]
 
-        if table in self.timeframe_filters:
+        if table in self.timeframe_filters and table == self.starting_table:
             filter_config = self.timeframe_filters[table]
             timeframe_clause = f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
             params.extend([filter_config.start_date, filter_config.end_date])
@@ -733,11 +763,11 @@ class RelationshipTraverser:
         pk_columns = ", ".join(f'"{pk}"' for pk in source_table.primary_keys)
         placeholders = ", ".join(["%s"] * len(target_pk_values))
 
-        # Apply timeframe filter if applicable
+        # Apply timeframe filter only to starting table
         timeframe_clause = ""
         params: list[Any] = target_pk_values.copy()
 
-        if table in self.timeframe_filters:
+        if table in self.timeframe_filters and table == self.starting_table:
             filter_config = self.timeframe_filters[table]
             timeframe_clause = f' AND "{filter_config.column_name}" BETWEEN %s AND %s'
             params.extend([filter_config.start_date, filter_config.end_date])
