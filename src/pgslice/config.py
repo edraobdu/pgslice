@@ -46,6 +46,7 @@ class AppConfig:
     sql_batch_size: int = 100
     output_dir: Path = Path.home() / ".pgslice" / "dumps"
     create_schema: bool = False
+    natural_keys: dict[str, list[str]] | None = None
 
 
 def load_config() -> AppConfig:
