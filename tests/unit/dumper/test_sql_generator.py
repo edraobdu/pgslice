@@ -764,8 +764,11 @@ class TestFkRemapping(TestSQLGenerator):
 
         sql = generator.generate_batch(records, keep_pks=False)
 
-        # Verify WITH clause and array aggregation
-        assert "WITH inserted AS" in sql
+        # Verify natural key CTE pattern (new format with to_insert, existing, inserted, etc.)
+        assert "WITH to_insert AS" in sql  # Natural key CTE pattern
+        assert "existing AS" in sql  # Checks for existing records
+        assert "inserted AS" in sql  # Actual INSERT statement
+        assert "IS NOT DISTINCT FROM" in sql  # NULL-safe natural key comparison
         assert "array_agg" in sql
         assert "v_new_ids" in sql
         assert "FOR i IN 1..array_length" in sql
@@ -976,10 +979,14 @@ class TestOnConflictHandling(TestSQLGenerator):
         generator = SQLGenerator(mock_introspector)
 
         # Test the helper method directly
-        result = generator._build_on_conflict_clause(table, ["id", "email"], [])
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
+            table, ["id", "email"], [], "public", "users"
+        )
 
-        if result:  # ON CONFLICT clause generated
-            assert "ON CONFLICT" in result or result == ""
+        # Should use unique constraint
+        assert on_conflict != ""
+        assert natural_keys is None
+        assert "ON CONFLICT" in on_conflict
 
     def test_build_on_conflict_without_constraints(
         self, mock_introspector: MagicMock
@@ -1007,13 +1014,16 @@ class TestOnConflictHandling(TestSQLGenerator):
         mock_introspector.get_table_metadata.return_value = table
         generator = SQLGenerator(mock_introspector)
 
-        result = generator._build_on_conflict_clause(table, ["id"], [])
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
+            table, ["id"], [], "public", "logs"
+        )
 
         # Should build ON CONFLICT for non-auto-generated PK
-        assert "ON CONFLICT" in result
-        assert '("id")' in result
-        assert "DO UPDATE SET" in result
-        assert '"id" = EXCLUDED."id"' in result
+        assert natural_keys is None
+        assert "ON CONFLICT" in on_conflict
+        assert '("id")' in on_conflict
+        assert "DO UPDATE SET" in on_conflict
+        assert '"id" = EXCLUDED."id"' in on_conflict
 
     def test_build_on_conflict_with_string_pk(
         self, mock_introspector: MagicMock
@@ -1048,17 +1058,20 @@ class TestOnConflictHandling(TestSQLGenerator):
         generator = SQLGenerator(mock_introspector)
 
         # Test the helper method directly
-        result = generator._build_on_conflict_clause(
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
             table,
             ["id", "name"],
             [],  # No auto-gen PKs
+            "public",
+            "shipments_shipmentstate",
         )
 
         # Should generate ON CONFLICT for the string PK
-        assert "ON CONFLICT" in result
-        assert '("id")' in result
-        assert "DO UPDATE SET" in result
-        assert '"id" = EXCLUDED."id"' in result
+        assert natural_keys is None
+        assert "ON CONFLICT" in on_conflict
+        assert '("id")' in on_conflict
+        assert "DO UPDATE SET" in on_conflict
+        assert '"id" = EXCLUDED."id"' in on_conflict
 
     def test_build_on_conflict_with_composite_string_pks(
         self, mock_introspector: MagicMock
@@ -1100,16 +1113,21 @@ class TestOnConflictHandling(TestSQLGenerator):
         mock_introspector.get_table_metadata.return_value = table
         generator = SQLGenerator(mock_introspector)
 
-        result = generator._build_on_conflict_clause(
-            table, ["entity_a_id", "entity_b_id", "created_at"], []
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
+            table,
+            ["entity_a_id", "entity_b_id", "created_at"],
+            [],
+            "public",
+            "junction_table",
         )
 
         # Should generate ON CONFLICT with both PKs
-        assert "ON CONFLICT" in result
-        assert '("entity_a_id", "entity_b_id")' in result
-        assert "DO UPDATE SET" in result
+        assert natural_keys is None
+        assert "ON CONFLICT" in on_conflict
+        assert '("entity_a_id", "entity_b_id")' in on_conflict
+        assert "DO UPDATE SET" in on_conflict
         # Should use first PK for no-op update
-        assert '"entity_a_id" = EXCLUDED."entity_a_id"' in result
+        assert '"entity_a_id" = EXCLUDED."entity_a_id"' in on_conflict
 
     def test_build_on_conflict_with_mixed_pks(
         self, mock_introspector: MagicMock
@@ -1152,22 +1170,25 @@ class TestOnConflictHandling(TestSQLGenerator):
         generator = SQLGenerator(mock_introspector)
 
         # Only "version" is being inserted (id is excluded as auto-gen)
-        result = generator._build_on_conflict_clause(
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
             table,
             ["version", "data"],
             ["id"],  # id is auto-gen
+            "public",
+            "versioned_data",
         )
 
         # Should generate ON CONFLICT for non-auto-gen PK only
-        assert "ON CONFLICT" in result
-        assert '("version")' in result
-        assert "DO UPDATE SET" in result
-        assert '"version" = EXCLUDED."version"' in result
+        assert natural_keys is None
+        assert "ON CONFLICT" in on_conflict
+        assert '("version")' in on_conflict
+        assert "DO UPDATE SET" in on_conflict
+        assert '"version" = EXCLUDED."version"' in on_conflict
 
     def test_build_on_conflict_all_auto_gen_pks_no_unique(
         self, mock_introspector: MagicMock
     ) -> None:
-        """Should return empty string when all PKs are auto-generated and no unique constraints."""
+        """Should detect natural key when all PKs are auto-generated and no unique constraints."""
         table = Table(
             schema_name="public",
             table_name="products",
@@ -1196,14 +1217,17 @@ class TestOnConflictHandling(TestSQLGenerator):
         mock_introspector.get_table_metadata.return_value = table
         generator = SQLGenerator(mock_introspector)
 
-        result = generator._build_on_conflict_clause(
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
             table,
             ["name"],
             ["id"],  # id is auto-gen and excluded
+            "public",
+            "products",
         )
 
-        # Should return empty string (no ON CONFLICT needed)
-        assert result == ""
+        # Should detect "name" as natural key (PRIORITY 3)
+        assert on_conflict == ""
+        assert natural_keys == ["name"]
 
     def test_build_on_conflict_string_pk_takes_priority_over_unique(
         self, mock_introspector: MagicMock
@@ -1237,13 +1261,16 @@ class TestOnConflictHandling(TestSQLGenerator):
         mock_introspector.get_table_metadata.return_value = table
         generator = SQLGenerator(mock_introspector)
 
-        result = generator._build_on_conflict_clause(table, ["username", "email"], [])
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
+            table, ["username", "email"], [], "public", "users"
+        )
 
         # Should use PK, not unique constraint
-        assert "ON CONFLICT" in result
-        assert '("username")' in result  # PK, not email
-        assert "DO UPDATE SET" in result
-        assert '"username" = EXCLUDED."username"' in result
+        assert natural_keys is None  # Using ON CONFLICT, not natural keys
+        assert "ON CONFLICT" in on_conflict
+        assert '("username")' in on_conflict  # PK, not email
+        assert "DO UPDATE SET" in on_conflict
+        assert '"username" = EXCLUDED."username"' in on_conflict
 
     def test_generate_batch_plpgsql_string_pk_idempotent(
         self, mock_introspector: MagicMock
@@ -2435,3 +2462,498 @@ class TestReservedKeywordColumns(TestSQLGenerator):
         assert '"order"' in sql
         # Verify they're in the column list
         assert '("group", "id", "order", "references", "user")' in sql
+
+
+class TestNaturalKeyDetection(TestSQLGenerator):
+    """Tests for natural key detection and idempotency."""
+
+    def test_detect_natural_keys_common_names(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should detect common unique column names as natural keys."""
+        # Test "name" column
+        table_with_name = Table(
+            schema_name="public",
+            table_name="roles",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table_with_name
+        generator = SQLGenerator(mock_introspector)
+
+        natural_keys = generator._detect_natural_keys("public", "roles")
+
+        assert natural_keys == ["name"]
+
+        # Test "code" column
+        table_with_code = Table(
+            schema_name="public",
+            table_name="statuses",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="code",
+                    data_type="varchar",
+                    udt_name="varchar",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table_with_code
+        generator = SQLGenerator(mock_introspector)
+
+        natural_keys = generator._detect_natural_keys("public", "statuses")
+
+        assert natural_keys == ["code"]
+
+        # Test pattern match "_code"
+        table_with_pattern = Table(
+            schema_name="public",
+            table_name="countries",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="country_code",
+                    data_type="varchar",
+                    udt_name="varchar",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table_with_pattern
+        generator = SQLGenerator(mock_introspector)
+
+        natural_keys = generator._detect_natural_keys("public", "countries")
+
+        assert natural_keys == ["country_code"]
+
+    def test_detect_natural_keys_reference_table(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should detect natural key in reference table pattern (2-3 columns)."""
+        table = Table(
+            schema_name="shipments",
+            table_name="shipmentreprole",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="name",
+                    data_type="varchar",
+                    udt_name="varchar",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        natural_keys = generator._detect_natural_keys("shipments", "shipmentreprole")
+
+        # Should detect reference table pattern (2 columns, 1 non-PK VARCHAR)
+        assert natural_keys == ["name"]
+
+    def test_detect_natural_keys_manual_override(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should use manual override when provided via CLI."""
+        table = Table(
+            schema_name="public",
+            table_name="products",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="sku",
+                    data_type="varchar",
+                    udt_name="varchar",
+                    nullable=False,
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+
+        # Create generator with manual override
+        manual_keys = {"public.products": ["sku"]}
+        generator = SQLGenerator(mock_introspector, natural_keys=manual_keys)
+
+        natural_keys = generator._detect_natural_keys("public", "products")
+
+        # Should use manual override, not auto-detected "name"
+        assert natural_keys == ["sku"]
+
+        # Test without schema prefix
+        manual_keys_no_schema = {"products": ["sku", "name"]}
+        generator = SQLGenerator(mock_introspector, natural_keys=manual_keys_no_schema)
+
+        natural_keys = generator._detect_natural_keys("public", "products")
+
+        # Should match table name without schema
+        assert natural_keys == ["sku", "name"]
+
+    def test_build_on_conflict_with_natural_keys(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should return natural keys when no ON CONFLICT clause possible."""
+        table = Table(
+            schema_name="public",
+            table_name="roles",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        on_conflict, natural_keys = generator._build_on_conflict_clause(
+            table, ["name"], ["id"], "public", "roles"
+        )
+
+        # Should return empty ON CONFLICT and natural keys list
+        assert on_conflict == ""
+        assert natural_keys == ["name"]
+
+    def test_generate_insert_with_natural_key_check_single(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should generate CTE-based INSERT for single record with natural key."""
+        table = Table(
+            schema_name="public",
+            table_name="roles",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="name",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=False,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="roles", schema_name="public", pk_values=("1",)
+                ),
+                data={"id": 1, "name": "Admin"},
+                dependencies=[],
+            )
+        ]
+
+        sql = generator._generate_insert_with_natural_key_check(
+            "public", "roles", records, ["name"], ["id"]
+        )
+
+        # Verify CTE structure
+        assert "WITH to_insert AS" in sql
+        assert "existing AS" in sql
+        assert "inserted AS" in sql
+        assert "all_ids AS" in sql
+        # Verify NULL-safe comparison
+        assert "IS NOT DISTINCT FROM" in sql
+        # Verify ordering for FK mapping
+        assert "ORDER BY old_id" in sql
+        # Verify data
+        assert "'Admin'" in sql
+
+    def test_generate_insert_with_natural_key_check_bulk(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should generate CTE-based INSERT for bulk records with natural key."""
+        table = Table(
+            schema_name="public",
+            table_name="statuses",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="code",
+                    data_type="varchar",
+                    udt_name="varchar",
+                    nullable=False,
+                ),
+                Column(
+                    name="description",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=True,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="statuses", schema_name="public", pk_values=("1",)
+                ),
+                data={"id": 1, "code": "ACTIVE", "description": "Active status"},
+                dependencies=[],
+            ),
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="statuses", schema_name="public", pk_values=("2",)
+                ),
+                data={"id": 2, "code": "INACTIVE", "description": "Inactive status"},
+                dependencies=[],
+            ),
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="statuses", schema_name="public", pk_values=("3",)
+                ),
+                data={"id": 3, "code": "PENDING", "description": None},
+                dependencies=[],
+            ),
+        ]
+
+        sql = generator._generate_insert_with_natural_key_check(
+            "public", "statuses", records, ["code"], ["id"]
+        )
+
+        # Verify CTE structure
+        assert "WITH to_insert AS" in sql
+        assert "existing AS" in sql
+        assert "inserted AS" in sql
+        # Verify all records
+        assert "'ACTIVE'" in sql
+        assert "'INACTIVE'" in sql
+        assert "'PENDING'" in sql
+        # Verify NULL handling
+        assert "NULL" in sql
+        # Verify natural key matching
+        assert '"code" IS NOT DISTINCT FROM' in sql
+
+    def test_generate_insert_with_natural_key_check_composite(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should generate CTE-based INSERT with composite natural key."""
+        table = Table(
+            schema_name="public",
+            table_name="tenant_settings",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="tenant_id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                ),
+                Column(
+                    name="setting_key",
+                    data_type="varchar",
+                    udt_name="varchar",
+                    nullable=False,
+                ),
+                Column(
+                    name="value",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=True,
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        manual_keys = {"tenant_settings": ["tenant_id", "setting_key"]}
+        generator = SQLGenerator(mock_introspector, natural_keys=manual_keys)
+
+        records = [
+            RecordData(
+                identifier=RecordIdentifier(
+                    table_name="tenant_settings",
+                    schema_name="public",
+                    pk_values=("1",),
+                ),
+                data={
+                    "id": 1,
+                    "tenant_id": 42,
+                    "setting_key": "theme",
+                    "value": "dark",
+                },
+                dependencies=[],
+            )
+        ]
+
+        sql = generator._generate_insert_with_natural_key_check(
+            "public",
+            "tenant_settings",
+            records,
+            ["tenant_id", "setting_key"],
+            ["id"],
+        )
+
+        # Verify composite key matching (both columns)
+        assert '"tenant_id" IS NOT DISTINCT FROM' in sql
+        assert '"setting_key" IS NOT DISTINCT FROM' in sql
+        # Verify CTE structure
+        assert "WITH to_insert AS" in sql
+
+    def test_natural_key_error_when_no_detection(
+        self, mock_introspector: MagicMock
+    ) -> None:
+        """Should raise SchemaError when no natural keys can be detected."""
+        # Table with auto-gen PK, no unique constraints, and no natural key candidates
+        table = Table(
+            schema_name="public",
+            table_name="logs",
+            columns=[
+                Column(
+                    name="id",
+                    data_type="integer",
+                    udt_name="int4",
+                    nullable=False,
+                    is_primary_key=True,
+                    is_auto_generated=True,
+                ),
+                Column(
+                    name="message",
+                    data_type="text",
+                    udt_name="text",
+                    nullable=True,  # nullable, so not a candidate
+                ),
+                Column(
+                    name="timestamp",
+                    data_type="timestamp",
+                    udt_name="timestamp",
+                    nullable=False,  # not VARCHAR/TEXT, so not a candidate
+                ),
+            ],
+            primary_keys=["id"],
+            foreign_keys_outgoing=[],
+            foreign_keys_incoming=[],
+            unique_constraints={},
+        )
+
+        mock_introspector.get_table_metadata.return_value = table
+        generator = SQLGenerator(mock_introspector)
+
+        # Should raise error with helpful message
+        with pytest.raises(Exception) as exc_info:
+            generator._build_on_conflict_clause(
+                table, ["message", "timestamp"], ["id"], "public", "logs"
+            )
+
+        error_msg = str(exc_info.value)
+        assert "Cannot generate idempotent SQL" in error_msg
+        assert "public" in error_msg
+        assert "logs" in error_msg
+        assert "--natural-keys" in error_msg

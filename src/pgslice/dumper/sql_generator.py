@@ -10,6 +10,7 @@ from uuid import UUID
 
 from ..db.schema import SchemaIntrospector
 from ..graph.models import RecordData, RecordIdentifier, Table
+from ..utils.exceptions import SchemaError
 from ..utils.logging_config import get_logger
 from .ddl_generator import DDLGenerator
 
@@ -20,7 +21,10 @@ class SQLGenerator:
     """Generates INSERT statements from record data."""
 
     def __init__(
-        self, schema_introspector: SchemaIntrospector, batch_size: int = 100
+        self,
+        schema_introspector: SchemaIntrospector,
+        batch_size: int = 100,
+        natural_keys: dict[str, list[str]] | None = None,
     ) -> None:
         """
         Initialize SQL generator.
@@ -28,12 +32,17 @@ class SQLGenerator:
         Args:
             schema_introspector: Schema introspection utility for table metadata
             batch_size: Number of rows per INSERT statement (0 or -1 = unlimited)
+            natural_keys: Manual natural key overrides (format: {"schema.table": ["col1", "col2"]})
         """
         self.introspector = schema_introspector
         # 0 or -1 means unlimited batch size
         self.batch_size = batch_size if batch_size > 0 else 999999
+        # Manual natural key overrides from config/CLI
+        self.natural_keys = natural_keys or {}
         # Cache column type mappings per table to avoid repeated lookups
         self._column_type_cache: dict[tuple[str, str], dict[str, tuple[str, str]]] = {}
+        # Cache natural key detection results per table
+        self._natural_key_cache: dict[tuple[str, str], list[str]] = {}
 
     def generate_bulk_insert(self, records: list[RecordData]) -> str:
         """
@@ -651,6 +660,26 @@ class SQLGenerator:
             ]
         )
 
+        # Add sequence synchronization to prevent conflicts
+        if tables_with_remapped_ids:
+            sql_parts.append("    -- Synchronize sequences to prevent ID conflicts")
+            for schema, table in tables_with_remapped_ids:
+                auto_gen_pks = self._get_auto_generated_pk_columns(schema, table)
+                for pk_col in auto_gen_pks:
+                    try:
+                        seq_name = self._get_sequence_name(schema, table, pk_col)
+                        full_table_name = f'"{schema}"."{table}"'
+                        sql_parts.append(
+                            f"    PERFORM setval('{seq_name}', "
+                            f'COALESCE((SELECT MAX("{pk_col}") FROM {full_table_name}), 1));'
+                        )
+                    except SchemaError:
+                        # Column might not have a sequence (e.g., UUID PKs)
+                        logger.debug(
+                            f"Skipping sequence sync for {schema}.{table}.{pk_col} (no sequence)"
+                        )
+            sql_parts.append("")  # Blank line after sequence sync
+
         # 5. Generate INSERT statements for each table
         for (schema, table), table_records in records_by_table.items():
             full_table_name = f'"{schema}"."{table}"'
@@ -736,6 +765,38 @@ class SQLGenerator:
     def _has_auto_generated_pks(self, schema: str, table: str) -> bool:
         """Check if table has any auto-generated PK columns."""
         return len(self._get_auto_generated_pk_columns(schema, table)) > 0
+
+    def _get_sequence_name(self, schema: str, table: str, column: str) -> str:
+        """
+        Get the sequence name for an auto-generated column.
+
+        Uses pg_get_serial_sequence() to find the sequence associated with a column.
+        This works for SERIAL, BIGSERIAL, and columns with explicit DEFAULT nextval().
+
+        Args:
+            schema: Schema name
+            table: Table name
+            column: Column name
+
+        Returns:
+            Fully qualified sequence name (e.g., 'public.users_id_seq')
+
+        Raises:
+            SchemaError: If column has no associated sequence
+        """
+        query = "SELECT pg_get_serial_sequence(%s, %s)"
+        full_table = f"{schema}.{table}"
+
+        with self.introspector.conn.cursor() as cur:
+            cur.execute(query, (full_table, column))
+            result = cur.fetchone()
+
+            if result and result[0]:
+                return str(result[0])
+
+            raise SchemaError(
+                f"Column {schema}.{table}.{column} has no associated sequence"
+            )
 
     def _parse_table_name(self, qualified_name: str) -> tuple[str, str]:
         """
@@ -838,30 +899,185 @@ class SQLGenerator:
             f"WHERE table_name='{target_table_full}' AND old_id='{old_id_str}')"
         )
 
+    def _build_natural_key_join_condition(
+        self, natural_keys: list[str], left_alias: str, right_alias: str
+    ) -> str:
+        """
+        Build JOIN condition for natural key matching that handles NULLs correctly.
+
+        Uses IS NOT DISTINCT FROM to treat NULL as a distinct value that can match.
+
+        Args:
+            natural_keys: List of column names forming the natural key
+            left_alias: Alias for left table in JOIN
+            right_alias: Alias for right table in JOIN
+
+        Returns:
+            SQL JOIN condition string
+
+        Example:
+            _build_natural_key_join_condition(["name"], "t", "ti")
+            → 't."name" IS NOT DISTINCT FROM ti."name"'
+
+            _build_natural_key_join_condition(["tenant_id", "code"], "t", "ti")
+            → 't."tenant_id" IS NOT DISTINCT FROM ti."tenant_id" AND t."code" IS NOT DISTINCT FROM ti."code"'
+        """
+        conditions = [
+            f'{left_alias}."{nk}" IS NOT DISTINCT FROM {right_alias}."{nk}"'
+            for nk in natural_keys
+        ]
+        return " AND ".join(conditions)
+
+    def _detect_natural_keys(
+        self,
+        schema: str,
+        table: str,
+    ) -> list[str]:
+        """
+        Detect columns that likely represent natural keys for idempotency.
+
+        Natural keys are columns that logically should be unique even without
+        explicit unique constraints. Used for generating idempotent INSERTs
+        when ON CONFLICT cannot be used.
+
+        Priority order:
+        1. Manual overrides from --natural-keys CLI option (self.natural_keys)
+        2. Common unique column names (name, code, slug, email, etc.)
+        3. Reference table pattern (2-3 columns with single non-PK VARCHAR)
+        4. Composite patterns (tenant_id + code, etc.)
+
+        Args:
+            schema: Schema name
+            table: Table name
+
+        Returns:
+            List of column names that form natural key, or empty list if none detected
+        """
+        # Check cache first
+        cache_key = (schema, table)
+        if cache_key in self._natural_key_cache:
+            return self._natural_key_cache[cache_key]
+
+        # PRIORITY 1: Manual overrides from CLI (self.natural_keys)
+        if self.natural_keys:
+            full_table_name = f"{schema}.{table}"
+            if full_table_name in self.natural_keys:
+                natural_keys = self.natural_keys[full_table_name]
+                self._natural_key_cache[cache_key] = natural_keys
+                logger.debug(
+                    f"Using manual natural keys for {schema}.{table}: {natural_keys}"
+                )
+                return natural_keys
+
+            # Also try without schema prefix (for convenience)
+            if table in self.natural_keys:
+                natural_keys = self.natural_keys[table]
+                self._natural_key_cache[cache_key] = natural_keys
+                logger.debug(
+                    f"Using manual natural keys for {schema}.{table}: {natural_keys}"
+                )
+                return natural_keys
+
+        # Get table metadata
+        table_meta = self.introspector.get_table_metadata(schema, table)
+
+        # Filter to non-PK, non-nullable columns
+        candidate_columns = [
+            col
+            for col in table_meta.columns
+            if not col.is_primary_key
+            and not col.nullable
+            and col.data_type in ("character varying", "text", "varchar")
+        ]
+
+        if not candidate_columns:
+            self._natural_key_cache[cache_key] = []
+            return []
+
+        # PRIORITY 2: Common unique column names (single column)
+        common_unique_names = {
+            "name",
+            "code",
+            "slug",
+            "email",
+            "username",
+            "key",
+            "identifier",
+            "handle",
+        }
+        common_unique_patterns = ["_code", "_key", "_identifier", "_slug"]
+
+        for col in candidate_columns:
+            col_lower = col.name.lower()
+            # Exact match
+            if col_lower in common_unique_names:
+                natural_keys = [col.name]
+                self._natural_key_cache[cache_key] = natural_keys
+                logger.info(
+                    f"Auto-detected natural key for {schema}.{table}: "
+                    f"{natural_keys} (common name pattern)"
+                )
+                return natural_keys
+
+            # Pattern match
+            for pattern in common_unique_patterns:
+                if col_lower.endswith(pattern):
+                    natural_keys = [col.name]
+                    self._natural_key_cache[cache_key] = natural_keys
+                    logger.info(
+                        f"Auto-detected natural key for {schema}.{table}: "
+                        f"{natural_keys} (pattern: *{pattern})"
+                    )
+                    return natural_keys
+
+        # PRIORITY 3: Reference table pattern
+        # Table has 2-3 total columns with exactly ONE non-PK non-nullable VARCHAR
+        total_columns = len(table_meta.columns)
+        if 2 <= total_columns <= 3 and len(candidate_columns) == 1:
+            natural_keys = [candidate_columns[0].name]
+            self._natural_key_cache[cache_key] = natural_keys
+            logger.info(
+                f"Auto-detected natural key for {schema}.{table}: "
+                f"{natural_keys} (reference table pattern)"
+            )
+            return natural_keys
+
+        # PRIORITY 4: No natural keys detected
+        self._natural_key_cache[cache_key] = []
+        return []
+
     def _build_on_conflict_clause(
         self,
         table_meta: Table,
         insert_columns: list[str],
         auto_gen_pks: list[str],
-    ) -> str:
+        schema: str,
+        table: str,
+    ) -> tuple[str, list[str] | None]:
         """
-        Build ON CONFLICT clause for primary keys or unique constraints.
+        Build ON CONFLICT clause OR detect natural keys for idempotency.
 
         Uses DO UPDATE with a no-op update to always get RETURNING values.
         This makes the SQL idempotent - reusing existing records instead of failing.
 
         Priority order:
-        1. Non-auto-generated primary keys (string PKs, UUIDs, manual IDs)
-        2. Unique constraints (existing behavior)
-        3. Empty string if all PKs are auto-generated and no unique constraints
+        1. Non-auto-generated primary keys (string PKs, UUIDs, manual IDs) → ON CONFLICT
+        2. Unique constraints → ON CONFLICT
+        3. Natural keys (auto-detected or manual from self.natural_keys) → CTE pattern
+        4. No idempotency available → ERROR
 
         Args:
             table_meta: Table metadata with primary keys and unique constraints
             insert_columns: Columns being inserted
             auto_gen_pks: Auto-generated PK columns (excluded from ON CONFLICT)
+            schema: Schema name (for natural key detection)
+            table: Table name (for natural key detection)
 
         Returns:
-            ON CONFLICT clause string, or empty string if no conflict target available
+            Tuple of (on_conflict_sql, natural_keys):
+            - If on_conflict_sql != "": use traditional ON CONFLICT, natural_keys is None
+            - If natural_keys is not None: use CTE pattern, on_conflict_sql is ""
+            - Both empty: error case (should never happen, raises exception)
         """
         # PRIORITY 1: Check for non-auto-generated primary keys
         # These are string PKs, UUIDs, or manually-set integer PKs
@@ -882,7 +1098,7 @@ class SQLGenerator:
                     f"ON CONFLICT ({conflict_cols}) "
                     f'DO UPDATE SET "{update_col}" = EXCLUDED."{update_col}"'
                 )
-                return on_conflict
+                return (on_conflict, None)
 
         # PRIORITY 2: Check for unique constraints (existing logic)
         unique_constraints = table_meta.unique_constraints
@@ -895,29 +1111,35 @@ class SQLGenerator:
             if not all(c in auto_gen_pks for c in cols)
         }
 
-        if not non_pk_unique:
-            return ""
+        if non_pk_unique:
+            # Use the first unique constraint for ON CONFLICT
+            # (could be improved to choose best constraint, but any will work)
+            constraint_name, constraint_cols = next(iter(non_pk_unique.items()))
 
-        # Use the first unique constraint for ON CONFLICT
-        # (could be improved to choose best constraint, but any will work)
-        constraint_name, constraint_cols = next(iter(non_pk_unique.items()))
+            # Check if all constraint columns are in insert_columns
+            if all(col in insert_columns for col in constraint_cols):
+                conflict_cols = ", ".join(f'"{col}"' for col in constraint_cols)
 
-        # Check if all constraint columns are in insert_columns
-        # (if not, we can't use this constraint for ON CONFLICT)
-        if not all(col in insert_columns for col in constraint_cols):
-            return ""
+                # Generate no-op UPDATE clause
+                # Pick the first column in the constraint for the update
+                update_col = constraint_cols[0]
+                on_conflict = (
+                    f"ON CONFLICT ({conflict_cols}) "
+                    f'DO UPDATE SET "{update_col}" = EXCLUDED."{update_col}"'
+                )
+                return (on_conflict, None)
 
-        conflict_cols = ", ".join(f'"{col}"' for col in constraint_cols)
+        # PRIORITY 3: Natural key detection
+        natural_keys = self._detect_natural_keys(schema, table)
+        if natural_keys and all(nk in insert_columns for nk in natural_keys):
+            return ("", natural_keys)
 
-        # Generate no-op UPDATE clause
-        # Pick the first column in the constraint for the update
-        update_col = constraint_cols[0]
-        on_conflict = (
-            f"ON CONFLICT ({conflict_cols}) "
-            f'DO UPDATE SET "{update_col}" = EXCLUDED."{update_col}"'
+        # PRIORITY 4: No idempotency available - ERROR
+        raise SchemaError(
+            f'Cannot generate idempotent SQL for table "{schema}"."{table}". '
+            f"Table has auto-generated primary keys with no unique constraints. "
+            f'Please specify natural keys using: --natural-keys "{schema}.{table}=col1,col2"'
         )
-
-        return on_conflict
 
     def _generate_insert_with_remapping(
         self, schema: str, table: str, records: list[RecordData]
@@ -957,11 +1179,22 @@ class SQLGenerator:
         values_clause = ",\n".join(values_rows)
         full_table_name = f'"{schema}"."{table}"'
 
-        # Build ON CONFLICT clause for unique constraints
-        on_conflict = self._build_on_conflict_clause(
-            table_meta, insert_columns, auto_gen_pks
+        # Build ON CONFLICT clause for unique constraints (or detect natural keys)
+        on_conflict, natural_keys = self._build_on_conflict_clause(
+            table_meta, insert_columns, auto_gen_pks, schema, table
         )
 
+        # Route to natural key CTE pattern if natural keys detected
+        if natural_keys:
+            logger.debug(
+                f"Using natural key CTE pattern for {schema}.{table} "
+                f"with keys: {natural_keys}"
+            )
+            return self._generate_insert_with_natural_key_check(
+                schema, table, records, natural_keys, auto_gen_pks
+            )
+
+        # Use traditional ON CONFLICT approach
         if len(records) == 1:
             # Single insert: use RETURNING INTO scalar variable
             sql_lines = [
@@ -1000,6 +1233,138 @@ class SQLGenerator:
                     "    END LOOP;",
                 ]
             )
+
+        return "\n".join(sql_lines)
+
+    def _generate_insert_with_natural_key_check(
+        self,
+        schema: str,
+        table: str,
+        records: list[RecordData],
+        natural_keys: list[str],
+        auto_gen_pks: list[str],
+    ) -> str:
+        """
+        Generate INSERT with natural key checking using CTE pattern.
+
+        Uses WHERE NOT EXISTS pattern to check for existing records by natural key.
+        This enables idempotent INSERTs when ON CONFLICT cannot be used
+        (no unique constraints on natural key columns).
+
+        Algorithm:
+        1. Create to_insert CTE with old_ids and data
+        2. Find existing records by natural key match (existing CTE)
+        3. INSERT only records not in existing (inserted CTE)
+        4. Join inserted records back to old_ids via natural key (inserted_with_old_ids CTE)
+        5. Combine existing and inserted IDs (all_ids CTE)
+        6. Aggregate in old_id order to maintain FK mapping alignment
+
+        Args:
+            schema: Schema name
+            table: Table name
+            records: List of records to insert
+            natural_keys: List of column names forming natural key
+            auto_gen_pks: List of auto-generated PK column names
+
+        Returns:
+            PL/pgSQL code for CTE-based INSERT with natural key checking
+        """
+        if not natural_keys:
+            raise ValueError("natural_keys must be non-empty")
+
+        if not auto_gen_pks:
+            raise ValueError("auto_gen_pks must be non-empty for this method")
+
+        # Get all columns EXCEPT auto-generated PKs
+        first_record = records[0]
+        all_columns = sorted(first_record.data.keys())
+        insert_columns = [col for col in all_columns if col not in auto_gen_pks]
+
+        # Verify natural keys are in insert columns
+        missing_nk = [nk for nk in natural_keys if nk not in insert_columns]
+        if missing_nk:
+            raise SchemaError(
+                f"Natural key columns {missing_nk} not found in "
+                f"insert columns for {schema}.{table}"
+            )
+
+        # Build column list
+        columns_sql = ", ".join(f'"{col}"' for col in insert_columns)
+        natural_keys_sql = ", ".join(f'"{nk}"' for nk in natural_keys)
+
+        # Get column type mapping
+        column_type_map = self._get_column_types(schema, table)
+
+        # Build VALUES rows and collect old PK values
+        values_rows = []
+        old_pk_values = []
+        for record in records:
+            values = [
+                self._format_value(record.data.get(col), column_type_map.get(col))
+                for col in insert_columns
+            ]
+            values_sql = ", ".join(values)
+            values_rows.append(f"        ({values_sql})")
+
+            old_pks = record.identifier.pk_values
+            old_pk_values.append(self._serialize_pk_value(old_pks))
+
+        values_clause = ",\n".join(values_rows)
+        full_table_name = f'"{schema}"."{table}"'
+        pk_col = auto_gen_pks[0]  # Use first PK column
+
+        # Build natural key JOIN conditions
+        nk_join_existing = self._build_natural_key_join_condition(
+            natural_keys, "t", "ti"
+        )
+        nk_join_inserted = self._build_natural_key_join_condition(
+            natural_keys, "ins", "ti"
+        )
+
+        old_ids_array = ", ".join(f"'{val}'" for val in old_pk_values)
+
+        # Generate CTE-based INSERT
+        sql_lines = [
+            f"    v_old_ids_{table} := ARRAY[{old_ids_array}];",
+            "    WITH to_insert AS (",
+            "        SELECT",
+            f"            unnest(v_old_ids_{table}) AS old_id,",
+            "            *",
+            "        FROM (VALUES",
+            f"{values_clause}",
+            f"        ) AS data({columns_sql})",
+            "    ),",
+            "    existing AS (",
+            f"        SELECT t.{pk_col} AS new_id, ti.old_id",
+            f"        FROM {full_table_name} t",
+            "        INNER JOIN to_insert ti",
+            f"            ON {nk_join_existing}",
+            "    ),",
+            "    inserted AS (",
+            f"        INSERT INTO {full_table_name} ({columns_sql})",
+            f"        SELECT {columns_sql}",
+            "        FROM to_insert",
+            "        WHERE old_id NOT IN (SELECT old_id FROM existing)",
+            f"        RETURNING {pk_col}, {natural_keys_sql}",
+            "    ),",
+            "    inserted_with_old_ids AS (",
+            f"        SELECT ins.{pk_col} AS new_id, ti.old_id",
+            "        FROM inserted ins",
+            "        INNER JOIN to_insert ti",
+            f"            ON {nk_join_inserted}",
+            "    ),",
+            "    all_ids AS (",
+            "        SELECT old_id, new_id FROM existing",
+            "        UNION ALL",
+            "        SELECT old_id, new_id FROM inserted_with_old_ids",
+            "    )",
+            f"    SELECT array_agg(new_id ORDER BY old_id) INTO v_new_ids_{table}",
+            "    FROM all_ids;",
+            "    ",
+            f"    FOR i IN 1..array_length(v_new_ids_{table}, 1) LOOP",
+            f"        INSERT INTO _pgslice_id_map VALUES ('{full_table_name}', v_old_ids_{table}[i], v_new_ids_{table}[i]::TEXT);",
+            "    END LOOP;",
+        ]
 
         return "\n".join(sql_lines)
 
@@ -1069,11 +1434,20 @@ class SQLGenerator:
                 values_rows.append(f"        ({values_sql})")
             values_clause = ",\n".join(values_rows)
 
-            # Build ON CONFLICT clause for idempotency
+            # Build ON CONFLICT clause for idempotency (or detect natural keys)
             table_meta = self.introspector.get_table_metadata(schema, table)
-            on_conflict = self._build_on_conflict_clause(
-                table_meta, columns, auto_gen_pks
+            on_conflict, natural_keys = self._build_on_conflict_clause(
+                table_meta, columns, auto_gen_pks, schema, table
             )
+
+            # Note: Natural key CTE pattern not implemented for FK remapping case yet
+            # Fall back to ON CONFLICT (which will error if natural_keys and no unique constraint)
+            if natural_keys:
+                logger.warning(
+                    f"Natural keys detected for {schema}.{table} but FK remapping is needed. "
+                    f"Natural key + FK remapping not yet supported. "
+                    f"Attempting ON CONFLICT fallback (may fail)."
+                )
 
             sql_parts = [
                 f"    INSERT INTO {full_table_name} ({columns_sql})",
@@ -1206,10 +1580,18 @@ class SQLGenerator:
         if has_auto_gen_pks:
             table_meta = self.introspector.get_table_metadata(schema, table)
 
-            # Build ON CONFLICT clause for idempotency
-            on_conflict = self._build_on_conflict_clause(
-                table_meta, columns, auto_gen_pks
+            # Build ON CONFLICT clause for idempotency (or detect natural keys)
+            on_conflict, natural_keys = self._build_on_conflict_clause(
+                table_meta, columns, auto_gen_pks, schema, table
             )
+
+            # Note: Natural key CTE pattern not implemented for FK remapping case yet
+            if natural_keys:
+                logger.warning(
+                    f"Natural keys detected for {schema}.{table} but FK remapping is needed. "
+                    f"Natural key + FK remapping not yet supported. "
+                    f"Attempting ON CONFLICT fallback (may fail)."
+                )
 
             if len(records) == 1:
                 # Single insert: use RETURNING INTO scalar variable
@@ -1255,10 +1637,18 @@ class SQLGenerator:
             # No auto-gen PKs: return simple INSERT-SELECT with ON CONFLICT
             table_meta = self.introspector.get_table_metadata(schema, table)
 
-            # Build ON CONFLICT clause for idempotency
-            on_conflict = self._build_on_conflict_clause(
-                table_meta, columns, auto_gen_pks
+            # Build ON CONFLICT clause for idempotency (or detect natural keys)
+            on_conflict, natural_keys = self._build_on_conflict_clause(
+                table_meta, columns, auto_gen_pks, schema, table
             )
+
+            # Note: Natural key CTE pattern not implemented for FK remapping case yet
+            if natural_keys:
+                logger.warning(
+                    f"Natural keys detected for {schema}.{table} but FK remapping is needed. "
+                    f"Natural key + FK remapping not yet supported. "
+                    f"Attempting ON CONFLICT fallback (may fail)."
+                )
 
             sql_lines = base_sql_lines.copy()
             # Remove trailing semicolon if present

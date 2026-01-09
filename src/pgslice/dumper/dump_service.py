@@ -128,7 +128,9 @@ class DumpService:
             # Step 3: Generate SQL (using animated spinner)
             with animated_spinner(spinner, pbar.set_description, "Generating SQL"):
                 generator = SQLGenerator(
-                    introspector, batch_size=self.config.sql_batch_size
+                    introspector,
+                    batch_size=self.config.sql_batch_size,
+                    natural_keys=self.config.natural_keys,
                 )
                 sql = generator.generate_batch(
                     sorted_records,

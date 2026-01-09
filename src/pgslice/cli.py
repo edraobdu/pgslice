@@ -81,6 +81,74 @@ def parse_main_timeframe(spec: str) -> MainTableTimeframe:
     )
 
 
+def parse_natural_keys(spec: str) -> dict[str, list[str]]:
+    """
+    Parse natural keys specification.
+
+    Format: schema.table=col1,col2;other_table=col1
+    Example: public.roles=name;public.statuses=code
+
+    Args:
+        spec: Natural keys specification string
+
+    Returns:
+        Dict mapping "schema.table" to list of column names
+
+    Raises:
+        InvalidTimeframeError: If specification is invalid
+
+    Examples:
+        >>> parse_natural_keys("public.roles=name")
+        {"public.roles": ["name"]}
+
+        >>> parse_natural_keys("public.roles=name;statuses=code")
+        {"public.roles": ["name"], "statuses": ["code"]}
+
+        >>> parse_natural_keys("roles=name,code")
+        {"roles": ["name", "code"]}
+    """
+    result: dict[str, list[str]] = {}
+
+    # Split by semicolon to get individual table specifications
+    table_specs = spec.split(";")
+
+    for table_spec in table_specs:
+        table_spec = table_spec.strip()
+        if not table_spec:
+            continue
+
+        # Split by = to get table and columns
+        if "=" not in table_spec:
+            raise InvalidTimeframeError(
+                f"Invalid natural key format: {table_spec}. "
+                "Expected: table=col1,col2 or schema.table=col1"
+            )
+
+        table_part, columns_part = table_spec.split("=", 1)
+        table_part = table_part.strip()
+        columns_part = columns_part.strip()
+
+        if not table_part or not columns_part:
+            raise InvalidTimeframeError(
+                f"Invalid natural key format: {table_spec}. "
+                "Both table and columns must be specified"
+            )
+
+        # Split columns by comma
+        columns = [col.strip() for col in columns_part.split(",")]
+        columns = [col for col in columns if col]  # Remove empty strings
+
+        if not columns:
+            raise InvalidTimeframeError(
+                f"Invalid natural key format: {table_spec}. "
+                "At least one column must be specified"
+            )
+
+        result[table_part] = columns
+
+    return result
+
+
 def fetch_pks_by_timeframe(
     conn_manager: ConnectionManager,
     table: str,
@@ -407,6 +475,15 @@ Examples:
         "-o",
         help="Output file path (default: stdout)",
     )
+    dump_group.add_argument(
+        "--natural-keys",
+        help=(
+            "Manually specify natural keys for tables without unique constraints. "
+            "Format: 'schema.table=col1,col2;other_table=col1'. "
+            "Enables idempotent INSERTs for tables with auto-generated PKs. "
+            "Example: 'public.roles=name;public.statuses=code'"
+        ),
+    )
 
     # Other arguments
     parser.add_argument(
@@ -455,6 +532,14 @@ Examples:
 
         if args.log_level:
             config.log_level = args.log_level
+
+        # Parse natural keys if provided
+        if args.natural_keys:
+            try:
+                config.natural_keys = parse_natural_keys(args.natural_keys)
+            except InvalidTimeframeError as e:
+                sys.stderr.write(f"Error: {e}\n")
+                return 1
 
         # Validate CLI dump mode arguments
         if args.dump and not args.pks and not args.timeframe:
